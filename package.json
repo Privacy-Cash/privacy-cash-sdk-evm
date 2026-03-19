@@ -1,0 +1,31 @@
+{
+  "name": "privacycash-evm",
+  "version": "0.0.1",
+  "description": "",
+  "main": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "ethers": "^5.0.0",
+    "ffjavascript": "^0.2.36",
+    "poseidon-lite": "^0.3.0",
+    "snarkjs": "^0.7.5",
+    "sqlite3": "^6.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.3",
+    "@types/snarkjs": "^0.7.9",
+    "babel-eslint": "^10.1.0",
+    "eslint": "^7.28.0",
+    "eslint-config-prettier": "^8.3.0",
+    "eslint-plugin-prettier": "^3.4.0"
+  }
+}
