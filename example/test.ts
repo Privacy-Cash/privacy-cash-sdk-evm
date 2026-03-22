@@ -1,6 +1,6 @@
 import { ethers } from 'ethers';
-import { deposit, getBalance, withdraw } from '../src/index.js';
-import { SIGN_PRIVACY_MESSAGE } from '../src/utils/constants.js';
+import { deposit, getBalance, withdraw } from '../dist/index.js';
+import { SIGN_PRIVACY_MESSAGE } from '../dist/utils/constants.js';
 
 if (!process.env.PRIVATE_KEY) {
     console.warn("Warning: PRIVATE_KEY is not set. Tests will fail.");
