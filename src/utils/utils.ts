@@ -53,7 +53,6 @@ export const toBuffer = (value: any, length: number) =>
 export function getExtDataHash({
     recipient,
     extAmount,
-    relayer,
     feeRecipient,
     fee,
     encryptedOutput1,

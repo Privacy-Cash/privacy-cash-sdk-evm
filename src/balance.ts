@@ -2,7 +2,7 @@ import { BigNumber, ethers } from 'ethers';
 import EtherPoolAbi from './utils/EtherPool.abi.json' with { type: 'json' };
 import { BASE_SEPOLIA_RPC, CONTRACT_ADDRESS } from './utils/constants.js';
 import { deriveKeys } from './utils/encryption.js';
-import { logger } from './utils/logger';
+import { logger } from './utils/logger.js';
 import { findUnspentUtxos, toFixedHex } from './utils/utils.js';
 
 export async function getBalance({ signature, address }: { signature: string, address: string }) {
