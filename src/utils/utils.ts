@@ -50,7 +50,7 @@ export const toBuffer = (value: any, length: number) =>
         'hex',
     );
 
-export function getExtDataHash({
+function getExtDataHash({
     recipient,
     extAmount,
     feeRecipient,

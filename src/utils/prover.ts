@@ -4,46 +4,22 @@ import { toFixedHex } from './utils.js';
 
 /**
  * Generates a Zero-Knowledge proof for a transaction.
- * Supports both Node.js (optimized CLI) and Web Browser (via snarkjs library).
+ * - Node.js / Browser: snarkjs JS API (fully in-memory, no tmp files)
+ * - Bun: CLI fallback via execFile, which spawns a Node.js child process.
+ *   snarkjs uses `web-worker` for multi-threading; Bun v1.3.10 crashes when
+ *   worker threads dispatch plain Error objects to EventTarget.dispatchEvent.
+ *   This is a confirmed Bun bug — not fixable in userspace JS. The CLI
+ *   fallback runs snarkjs under Node.js (#!/usr/bin/env node shebang), which
+ *   has no such issue.
  */
-export async function prove_backup(input: any, keyBasePath: string) {
-    // @ts-ignore
-    const snarkjs = await import('snarkjs');
-
-    // Browser-based snarkjs proof generation
-    const { proof } = await snarkjs.groth16.fullProve(
-        utils.stringifyBigInts(input),
-        `${keyBasePath}.wasm`,
-        `${keyBasePath}.zkey`
-    );
-
-    const pA = [toFixedHex(proof.pi_a[0]), toFixedHex(proof.pi_a[1])];
-    const pB = [
-        [toFixedHex(proof.pi_b[0][1]), toFixedHex(proof.pi_b[0][0])],
-        [toFixedHex(proof.pi_b[1][1]), toFixedHex(proof.pi_b[1][0])],
-    ];
-    const pC = [toFixedHex(proof.pi_c[0]), toFixedHex(proof.pi_c[1])];
-
-    return { pA, pB, pC };
-}
-
 export async function prove(input: any, keyBasePath: string) {
-    // Check if running in browser (most reliable method for Next.js compatibility)
-    const isBrowser = typeof window !== 'undefined';
-
-    if (isBrowser) {
-        return await proveBrowser(input, keyBasePath);
-    } else {
+    // @ts-ignore
+    if (typeof Bun !== 'undefined') {
         return await proveNode(input, keyBasePath);
     }
-}
 
-
-async function proveBrowser(input: any, keyBasePath: string) {
     // @ts-ignore
     const snarkjs = await import('snarkjs');
-
-    // Browser-based snarkjs proof generation
     const { proof } = await snarkjs.groth16.fullProve(
         utils.stringifyBigInts(input),
         `${keyBasePath}.wasm`,
