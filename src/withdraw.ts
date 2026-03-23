@@ -2,7 +2,7 @@ import { BigNumber, ethers } from 'ethers';
 import EtherPoolAbi from './utils/EtherPool.abi.json' with { type: 'json' };
 import { BASE_SEPOLIA_RPC, CONTRACT_ADDRESS, FEE_RATE, FEE_RECIPIENT_ADDRESS, INDEXER_URL, MIN_WITHDRAWAL_AMOUNT, RENT_FEE } from './utils/constants.js';
 import { deriveKeys } from './utils/encryption.js';
-import { logger } from './utils/logger';
+import { logger } from './utils/logger.js';
 import { findUnspentUtxos, prepareTransaction, toFixedHex } from './utils/utils.js';
 import { Utxo } from './utils/utxo.js';
 
