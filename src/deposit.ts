@@ -45,7 +45,7 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
     }
 
     // post address to /screen_address of indexer to check if it's blacklisted
-    logger.info('screening wallet address...')
+    logger.info('screening wallet address')
     logger.debug(`screening address ${address}`)
     let res = await fetch(INDEXER_URL + '/screen_address', {
         method: 'POST',
@@ -89,7 +89,7 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
 
     logger.debug(`Depositing ${depositAmountInput} ETH (new output: ${ethers.utils.formatEther(outputAmount)} ETH)`);
 
-    logger.info('generating ZK proof...')
+    logger.info('generating ZK proof')
 
     const { args, extData } = await prepareTransaction({
         inputs,
@@ -119,7 +119,7 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
         throw new Error('Failed to fetch network fee data for transaction signing');
     }
 
-    logger.info('waiting for user signature...')
+    logger.info('waiting for user signature')
     let tx = await txSender(unsignedTx)
     logger.info(`confirming transaction...`);
     logger.debug('veryfying transaction on indexer...', extData.encryptedOutput1)

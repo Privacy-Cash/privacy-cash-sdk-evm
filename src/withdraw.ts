@@ -45,7 +45,7 @@ export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, si
     const withdrawAmount = ethers.utils.parseEther(withdrawAmountInput.toString());
 
     // Scan on-chain events to find unspent UTXOs
-    logger.info('loading utxos...')
+    logger.info('loading utxos')
     const unspent = await findUnspentUtxos({
         etherPool,
         encryptionKey,
@@ -90,7 +90,7 @@ export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, si
     }
 
     logger.debug(`\nWithdrawing ${realAriveAmount} ETH to ${recipient}...`);
-    logger.info('generating ZK proof...')
+    logger.info('generating ZK proof')
 
     const { args, extData } = await prepareTransaction({
         inputs,
@@ -127,7 +127,7 @@ export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, si
         logger.debug(`\nChange UTXO created (${ethers.utils.formatEther(changeAmount)} ETH)`);
     }
 
-    logger.info('confirming transaction...')
+    logger.info('confirming transaction')
     let retryTimes = 0
     let itv = 2
     // const encryptedOutputStr = Buffer.from(extData.encryptedOutput1).toString('hex')
