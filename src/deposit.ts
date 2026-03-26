@@ -41,11 +41,11 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
 
     const maxDeposit = await etherPool.maximumDepositAmount();
     if (depositAmount.gt(maxDeposit)) {
-        throw new Error(`Deposit amount ${depositAmountInput} ETH exceeds pool limit of ${ethers.utils.formatEther(maxDeposit)} ETH`);
+        throw new Error(`Please deposit less than ${ethers.utils.formatEther(maxDeposit)} ETH`);
     }
 
     // post address to /screen_address of indexer to check if it's blacklisted
-    logger.info('screening wallet address')
+    logger.info('screening walleting')
     logger.debug(`screening address ${address}`)
     let res = await fetch(INDEXER_URL + '/screen_address', {
         method: 'POST',
@@ -121,7 +121,7 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
 
     logger.info('waiting for user signature')
     let tx = await txSender(unsignedTx)
-    logger.info(`confirming transaction...`);
+    logger.info(`confirming transaction`);
     logger.debug('veryfying transaction on indexer...', extData.encryptedOutput1)
     let retryTimes = 0
     let itv = 2
