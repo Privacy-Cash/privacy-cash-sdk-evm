@@ -5,7 +5,7 @@ import { deriveKeys } from './utils/encryption.js';
 import { logger } from './utils/logger.js';
 import { findUnspentUtxos, toFixedHex } from './utils/utils.js';
 
-export async function getBalance({ signature, address }: { signature: string, address: string }) {
+export async function getBalance({ signature, address, offset }: { signature: string, address: string, offset?: number }) {
     // const provider: ethers.providers.Provider = rawProvider?.request
     //     ? new ethers.providers.Web3Provider(rawProvider)
     //     : rawProvider;
@@ -35,7 +35,8 @@ export async function getBalance({ signature, address }: { signature: string, ad
         etherPool,
         encryptionKey,
         keypair,
-        address
+        address,
+        start: offset || 0,
     });
 
     logger.debug(`Unspent UTXOs: ${unspent.length}`);
