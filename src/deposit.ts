@@ -47,16 +47,20 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
     // post address to /screen_address of indexer to check if it's blacklisted
     logger.info('screening walleting')
     logger.debug(`screening address ${address}`)
-    let res = await fetch(INDEXER_URL + '/screen_address', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ address }),
-    });
-    let resJson = await res.json()
-    if (resJson.isRisk) {
-        throw new Error('Your wallet address is risky. Service rejected.');
+    try {
+        let res = await fetch(INDEXER_URL + '/screen_address', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ address }),
+        });
+        let resJson = await res.json()
+        if (resJson.isRisk) {
+            throw new Error('Your wallet address is risky. Service rejected.');
+        }
+    } catch (err) {
+        logger.error('Failed to screen address, but proceeding with deposit. Error:', err);
     }
     logger.debug('Address screening passed');
 
