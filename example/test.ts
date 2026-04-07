@@ -88,7 +88,7 @@ async function testSDK(testType: string, amountArg?: string) {
             console.log('Examples:');
             console.log('  bun example/test.ts balance');
             console.log('  bun example/test.ts deposit 0.001');
-            console.log('  bun example/test.ts withdraw 0.0005');
+            console.log('  bun example/test.ts withdraw 0.001');
         }
 
 
@@ -109,5 +109,5 @@ if (testType) {
     console.log('Examples:');
     console.log('  bun example/test.ts balance');
     console.log('  bun example/test.ts deposit 0.001');
-    console.log('  bun example/test.ts withdraw 0.0005');
+    console.log('  bun example/test.ts withdraw 0.001');
 }
