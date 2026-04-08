@@ -321,7 +321,6 @@ export async function findUnspentUtxos({
         const nullifiers = chunk.map((x) => x.nullifier)
         try {
             const spentFlags: boolean[] = await etherPool.isSpentArray(nullifiers)
-
             for (let j = 0; j < chunk.length; j++) {
                 if (!spentFlags[j]) {
                     unspent.push(chunk[j].utxo)

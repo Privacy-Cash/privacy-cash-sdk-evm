@@ -22,7 +22,7 @@ export class UniversalStorage {
 
     constructor(
         private dbName: string = 'PrivacyCash',
-        private storeName: string = 'evm'
+        private storeName: string = 'evmprod'
     ) { }
 
     async init(): Promise<UniversalStorage> {
