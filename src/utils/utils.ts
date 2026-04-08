@@ -7,7 +7,7 @@ import { logger } from './logger.js';
 import { prove } from './prover.js';
 import { Utxo } from './utxo.js';
 
-const storage = new UniversalStorage('PrivacyCashDB', 'evm');
+const storage = new UniversalStorage('PrivacyCashDB', 'evmProd');
 
 export const FIELD_SIZE = BigNumber.from(
     '21888242871839275222246405745257275088548364400416034343698204186575808495617',
@@ -245,8 +245,8 @@ export async function findUnspentUtxos({
     start?: number;
 }) {
     await storage.init();
-    const offsetKey = `offset_${address}`;
-    const knownKey = `keo_${address}`;
+    const offsetKey = `offset6_${address}`;
+    const knownKey = `keo6_${address}`;
     const cachedOffset = (await storage.get(offsetKey)) || start;
     const cachedKnown = (await storage.get(knownKey)) || [];
     let knownEncryptedOutputs = new Map<number, string>();

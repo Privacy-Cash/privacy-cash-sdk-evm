@@ -21,8 +21,8 @@ export class UniversalStorage {
     private adapter!: StorageAdapter;
 
     constructor(
-        private dbName: string = 'PrivacyCash',
-        private storeName: string = 'evmprod'
+        private dbName: string,
+        private storeName: string
     ) { }
 
     async init(): Promise<UniversalStorage> {
