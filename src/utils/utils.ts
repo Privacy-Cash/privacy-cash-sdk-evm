@@ -246,7 +246,7 @@ export async function findUnspentUtxos({
 }) {
     await storage.init();
     const offsetKey = `offset_${address}`;
-    const knownKey = `known_${address}`;
+    const knownKey = `keo_${address}`;
     const cachedOffset = (await storage.get(offsetKey)) || start;
     const cachedKnown = (await storage.get(knownKey)) || [];
     let knownEncryptedOutputs = new Map<number, string>();
