@@ -3,6 +3,6 @@ export { deposit } from './deposit.js'
 export { setLogger } from './utils/logger.js'
 export { withdraw } from './withdraw.js'
 
-export { FEE_RATE, FEE_RECIPIENT_ADDRESS, INDEXER_URL, MIN_DEPOSIT_AMOUNT, MIN_WITHDRAWAL_AMOUNT, RENT_FEE } from './utils/constants.js'
+export { FEE_RATE, FEE_RECIPIENT_ADDRESS, INDEXER_URL, MIN_DEPOSIT_AMOUNT, MIN_USDC_DEPOSIT_AMOUNT, MIN_USDC_WITHDRAWAL_AMOUNT, MIN_WITHDRAWAL_AMOUNT, PRIVATE_USDC_CONTRACT_ADDRESS, RENT_FEE, USDC_CONTRACT_ADDRESS, USDC_DECIMALS, USDC_RENT_FEE } from './utils/constants.js'
 export { clearCache } from './utils/utils.js'
 
