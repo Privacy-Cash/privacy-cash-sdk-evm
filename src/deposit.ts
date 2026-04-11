@@ -117,44 +117,30 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
     });
 
     if (isUsdc) {
-        const erc20Abi = [
-            'function approve(address spender, uint256 amount) returns (bool)',
-            'function allowance(address owner, address spender) view returns (uint256)',
-        ];
+        // Step 1: send ERC20 approve tx
+        const erc20Abi = ['function approve(address spender, uint256 amount) returns (bool)'];
         const erc20 = new ethers.Contract(USDC_CONTRACT_ADDRESS, erc20Abi, readProvider);
-
-        const [network, nonce, feeData, allowance] = await Promise.all([
+        const approveTx = await erc20.populateTransaction.approve(poolAddress, depositAmount);
+        const [network, nonce, feeData] = await Promise.all([
             readProvider.getNetwork(),
             readProvider.getTransactionCount(address, 'pending'),
             readProvider.getFeeData(),
-            erc20.allowance(address, poolAddress),
         ]);
-
+        const unsignedApproveTx: ethers.utils.Deferrable<ethers.providers.TransactionRequest> = {
+            ...approveTx,
+            nonce,
+            chainId: network.chainId,
+            gasPrice: feeData.gasPrice ?? undefined,
+        };
         if (!feeData.gasPrice) {
             throw new Error('Failed to fetch network fee data for approve transaction');
         }
-
-        // Step 1: approve unlimited if not already approved
-        const UNLIMITED = ethers.constants.MaxUint256;
-        let transactNonce = nonce;
-        if (allowance.lt(UNLIMITED.div(2))) {
-            logger.debug(`Current allowance: ${allowance.toString()}, approving unlimited`);
-            const approveTx = await erc20.populateTransaction.approve(poolAddress, UNLIMITED);
-            const unsignedApproveTx: ethers.utils.Deferrable<ethers.providers.TransactionRequest> = {
-                ...approveTx,
-                nonce,
-                chainId: network.chainId,
-                gasPrice: feeData.gasPrice,
-            };
-            logger.info('waiting for user signature (approve)');
-            await txSender(unsignedApproveTx);
-            transactNonce = nonce + 1;
-        } else {
-            logger.debug('Unlimited approval already set, skipping approve');
-        }
+        logger.info('waiting for user signature (approve)');
+        await txSender(unsignedApproveTx);
 
         // Step 2: send transact tx (no ETH value for ERC pool)
         const partialTx = await pool.populateTransaction.transact(args, extData, { gasLimit: 3000000 });
+        const transactNonce = nonce + 1;
         const unsignedTx: ethers.utils.Deferrable<ethers.providers.TransactionRequest> = {
             ...partialTx,
             nonce: transactNonce,
