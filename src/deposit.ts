@@ -1,9 +1,10 @@
 import { BigNumber, ethers } from 'ethers';
 import ERCPoolAbi from './utils/ERCPool.abi.json' with { type: 'json' };
 import EtherPoolAbi from './utils/EtherPool.abi.json' with { type: 'json' };
-import { BASE_SEPOLIA_RPC, CONTRACT_ADDRESS, INDEXER_URL, MIN_DEPOSIT_AMOUNT, MIN_USDC_DEPOSIT_AMOUNT, PRIVATE_USDC_CONTRACT_ADDRESS, USDC_CONTRACT_ADDRESS } from './utils/constants.js';
+import { BASE_SEPOLIA_RPC, CONTRACT_ADDRESS, INDEXER_URL, PRIVATE_USDC_CONTRACT_ADDRESS, USDC_CONTRACT_ADDRESS } from './utils/constants.js';
 import { deriveKeys } from './utils/encryption.js';
 import { logger } from './utils/logger.js';
+import { getRemoteConfig } from './utils/remoteConfig.js';
 import { findUnspentUtxos, prepareTransaction, toFixedHex } from './utils/utils.js';
 import { Utxo } from './utils/utxo.js';
 
@@ -18,13 +19,17 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
     const readProvider = new ethers.providers.JsonRpcProvider(BASE_SEPOLIA_RPC);
     const isUsdc = token === 'usdc';
 
+    const remoteConfig = await getRemoteConfig();
+    const minDepositEth = remoteConfig.minimum_deposit.eth;
+    const minDepositUsdc = remoteConfig.minimum_deposit.usdc;
+
     if (isUsdc) {
-        if (depositAmountInput < MIN_USDC_DEPOSIT_AMOUNT) {
-            throw new Error(`Deposit amount must be at least ${MIN_USDC_DEPOSIT_AMOUNT} USDC`);
+        if (depositAmountInput < minDepositUsdc) {
+            throw new Error(`Deposit amount must be at least ${minDepositUsdc} USDC`);
         }
     } else {
-        if (depositAmountInput < MIN_DEPOSIT_AMOUNT) {
-            throw new Error(`Deposit amount must be at least ${MIN_DEPOSIT_AMOUNT} ETH`);
+        if (depositAmountInput < minDepositEth) {
+            throw new Error(`Deposit amount must be at least ${minDepositEth} ETH`);
         }
     }
 

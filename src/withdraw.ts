@@ -1,14 +1,12 @@
 import { BigNumber, ethers } from 'ethers';
 import ERCPoolAbi from './utils/ERCPool.abi.json' with { type: 'json' };
 import EtherPoolAbi from './utils/EtherPool.abi.json' with { type: 'json' };
-import { BASE_SEPOLIA_RPC, CONTRACT_ADDRESS, FEE_RATE, FEE_RECIPIENT_ADDRESS, INDEXER_URL, MIN_USDC_WITHDRAWAL_AMOUNT, MIN_WITHDRAWAL_AMOUNT, PRIVATE_USDC_CONTRACT_ADDRESS, RENT_FEE, USDC_CONTRACT_ADDRESS, USDC_RENT_FEE } from './utils/constants.js';
+import { BASE_SEPOLIA_RPC, CONTRACT_ADDRESS, FEE_RECIPIENT_ADDRESS, INDEXER_URL, PRIVATE_USDC_CONTRACT_ADDRESS, USDC_CONTRACT_ADDRESS } from './utils/constants.js';
 import { deriveKeys } from './utils/encryption.js';
 import { logger } from './utils/logger.js';
+import { getRemoteConfig } from './utils/remoteConfig.js';
 import { findUnspentUtxos, prepareTransaction, toFixedHex } from './utils/utils.js';
 import { Utxo } from './utils/utxo.js';
-
-const ETH_FLAT_FEE = ethers.utils.parseEther(RENT_FEE.toString());
-const USDC_FLAT_FEE = ethers.utils.parseUnits(USDC_RENT_FEE.toString(), 6);
 
 export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, signature, address, token = 'eth' }: {
     withdrawAmountInput: number,
@@ -24,13 +22,23 @@ export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, si
 
     const isUsdc = token === 'usdc';
 
+    const remoteConfig = await getRemoteConfig();
+    const minWithdrawalEth = remoteConfig.minimum_withdrawal.eth;
+    const minWithdrawalUsdc = remoteConfig.minimum_withdrawal.usdc;
+    const rentFeeEth = remoteConfig.rent_fees.eth;
+    const rentFeeUsdc = remoteConfig.rent_fees.usdc;
+    const feeRate = remoteConfig.fee_rate;
+
+    const ETH_FLAT_FEE = ethers.utils.parseEther(rentFeeEth.toFixed(18));
+    const USDC_FLAT_FEE = ethers.utils.parseUnits(rentFeeUsdc.toFixed(6), 6);
+
     if (isUsdc) {
-        if (withdrawAmountInput < MIN_USDC_WITHDRAWAL_AMOUNT) {
-            throw new Error(`Withdrawal amount must be at least ${MIN_USDC_WITHDRAWAL_AMOUNT} USDC`);
+        if (withdrawAmountInput < minWithdrawalUsdc) {
+            throw new Error(`Withdrawal amount must be at least ${minWithdrawalUsdc} USDC`);
         }
     } else {
-        if (withdrawAmountInput < MIN_WITHDRAWAL_AMOUNT) {
-            throw new Error(`Withdrawal amount must be at least ${MIN_WITHDRAWAL_AMOUNT} ETH`);
+        if (withdrawAmountInput < minWithdrawalEth) {
+            throw new Error(`Withdrawal amount must be at least ${minWithdrawalEth} ETH`);
         }
     }
 
@@ -74,15 +82,15 @@ export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, si
 
     const inputSum = inputs.reduce((sum, u) => sum.add(u.amount), BigNumber.from(0));
     const flatFee = isUsdc ? USDC_FLAT_FEE : ETH_FLAT_FEE;
-    const fee = flatFee.add(withdrawAmount.mul(FEE_RATE).div(10000));
+    const fee = flatFee.add(withdrawAmount.mul(feeRate).div(10000));
 
     if (isUsdc) {
         logger.debug(`Input UTXOs: ${inputs.length} (total: ${ethers.utils.formatUnits(inputSum, 6)} USDC)`);
-        logger.debug(`Fee: ${ethers.utils.formatUnits(fee, 6)} USDC (${USDC_RENT_FEE} USDC + 0.35%)`);
+        logger.debug(`Fee: ${ethers.utils.formatUnits(fee, 6)} USDC (${rentFeeUsdc} USDC + ${feeRate / 100}%)`);
         logger.debug(`Amount to arrive at recipient: ${ethers.utils.formatUnits(withdrawAmount.sub(fee), 6)} USDC`);
     } else {
         logger.debug(`Input UTXOs: ${inputs.length} (total: ${ethers.utils.formatEther(inputSum)} ETH)`);
-        logger.debug(`Fee: ${ethers.utils.formatEther(fee)} ETH (${RENT_FEE} + 0.35%)`);
+        logger.debug(`Fee: ${ethers.utils.formatEther(fee)} ETH (${rentFeeEth} + ${feeRate / 100}%)`);
         logger.debug(`Amount to arrive at recipient: ${ethers.utils.formatEther(withdrawAmount.sub(fee))} ETH`);
     }
 
