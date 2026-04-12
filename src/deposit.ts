@@ -134,7 +134,7 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
         if (!feeData.gasPrice) {
             throw new Error('Failed to fetch network fee data for approve transaction');
         }
-        logger.info('waiting for user signature (approve)');
+        logger.info('waiting for user signature [approve]');
         await txSender(unsignedApproveTx);
         // txSender is expected to wait for the approve to be mined before returning
         // (the UI's txSender calls waitForTransactionReceipt for USDC).
@@ -160,7 +160,7 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
             chainId: network2.chainId,
             gasPrice: feeData2.gasPrice ?? undefined,
         };
-        logger.info('waiting for user signature (transact)');
+        logger.info('waiting for user signature [transact]');
         const tx = await txSender(unsignedTx);
 
         logger.info('confirming transaction');
@@ -196,7 +196,7 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
             throw new Error('Failed to fetch network fee data for transaction signing');
         }
 
-        logger.info('waiting for user signature')
+        logger.info('waiting for user signature [transact]');
         const tx = await txSender(unsignedTx);
         logger.info('confirming transaction');
         await confirmEncryptedOutput(extData.encryptedOutput1, token);
