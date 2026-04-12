@@ -114,29 +114,20 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
         : `${ethers.utils.formatEther(outputAmount)} ETH`;
     logger.debug(`Depositing ${depositAmountInput} ${isUsdc ? 'USDC' : 'ETH'} (new output: ${formattedOutput})`);
 
-    logger.info('generating ZK proof')
-
-    const { args, extData } = await prepareTransaction({
-        inputs,
-        outputs: [outputUtxo],
-        encryptionKey,
-        keyBasePath,
-        token,
-    });
-
     if (isUsdc) {
-        // Step 1: send ERC20 approve tx
+        // Step 1: send ERC20 approve tx first, BEFORE generating the ZK proof.
+        // The proof fetches the Merkle root; if we generate it before the approve
+        // is mined the root can advance while waiting, causing proof verification
+        // to fail on-chain.
         const erc20Abi = ['function approve(address spender, uint256 amount) returns (bool)'];
         const erc20 = new ethers.Contract(USDC_CONTRACT_ADDRESS, erc20Abi, readProvider);
         const approveTx = await erc20.populateTransaction.approve(poolAddress, depositAmount);
-        const [network, nonce, feeData] = await Promise.all([
+        const [network, feeData] = await Promise.all([
             readProvider.getNetwork(),
-            readProvider.getTransactionCount(address, 'pending'),
             readProvider.getFeeData(),
         ]);
         const unsignedApproveTx: ethers.utils.Deferrable<ethers.providers.TransactionRequest> = {
             ...approveTx,
-            nonce,
             chainId: network.chainId,
             gasPrice: feeData.gasPrice ?? undefined,
         };
@@ -145,15 +136,29 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
         }
         logger.info('waiting for user signature (approve)');
         await txSender(unsignedApproveTx);
+        // txSender is expected to wait for the approve to be mined before returning
+        // (the UI's txSender calls waitForTransactionReceipt for USDC).
 
-        // Step 2: send transact tx (no ETH value for ERC pool)
+        // Step 2: generate ZK proof with a fresh Merkle root now that approve is confirmed
+        logger.info('generating ZK proof')
+        const { args, extData } = await prepareTransaction({
+            inputs,
+            outputs: [outputUtxo],
+            encryptionKey,
+            keyBasePath,
+            token,
+        });
+
+        // Step 3: send transact tx (no ETH value for ERC pool)
         const partialTx = await pool.populateTransaction.transact(args, extData, { gasLimit: 2000000 });
-        const transactNonce = nonce + 1;
+        const [network2, feeData2] = await Promise.all([
+            readProvider.getNetwork(),
+            readProvider.getFeeData(),
+        ]);
         const unsignedTx: ethers.utils.Deferrable<ethers.providers.TransactionRequest> = {
             ...partialTx,
-            nonce: transactNonce,
-            chainId: network.chainId,
-            gasPrice: feeData.gasPrice,
+            chainId: network2.chainId,
+            gasPrice: feeData2.gasPrice ?? undefined,
         };
         logger.info('waiting for user signature (transact)');
         const tx = await txSender(unsignedTx);
@@ -162,6 +167,14 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
         await confirmEncryptedOutput(extData.encryptedOutput1, token);
         return tx;
     } else {
+        logger.info('generating ZK proof')
+        const { args, extData } = await prepareTransaction({
+            inputs,
+            outputs: [outputUtxo],
+            encryptionKey,
+            keyBasePath,
+            token,
+        });
         const partialTx = await pool.populateTransaction.transact(args, extData, {
             value: depositAmount,
             gasLimit: 3000000,

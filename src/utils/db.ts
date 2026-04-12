@@ -82,7 +82,7 @@ class BrowserIDBAdapter implements StorageAdapter {
 
     setup(): Promise<void> {
         return new Promise((resolve, reject) => {
-            const request = indexedDB.open(this.dbName, 2);
+            const request = indexedDB.open(this.dbName, 3);
             request.onupgradeneeded = (e: any) => {
                 const db = e.target.result as IDBDatabase;
                 if (!db.objectStoreNames.contains(this.storeName)) {
