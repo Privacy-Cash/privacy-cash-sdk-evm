@@ -1,56 +1,71 @@
 import { BigNumber, ethers } from 'ethers';
+import ERCPoolAbi from './utils/ERCPool.abi.json' with { type: 'json' };
 import EtherPoolAbi from './utils/EtherPool.abi.json' with { type: 'json' };
-import { BASE_SEPOLIA_RPC, CONTRACT_ADDRESS, FEE_RATE, FEE_RECIPIENT_ADDRESS, INDEXER_URL, MIN_WITHDRAWAL_AMOUNT, RENT_FEE } from './utils/constants.js';
+import { BASE_SEPOLIA_RPC, CONTRACT_ADDRESS, FEE_RECIPIENT_ADDRESS, INDEXER_URL, PRIVATE_USDC_CONTRACT_ADDRESS, USDC_CONTRACT_ADDRESS } from './utils/constants.js';
 import { deriveKeys } from './utils/encryption.js';
 import { logger } from './utils/logger.js';
+import { getRemoteConfig } from './utils/remoteConfig.js';
 import { findUnspentUtxos, prepareTransaction, toFixedHex } from './utils/utils.js';
 import { Utxo } from './utils/utxo.js';
 
-const FLAT_FEE = ethers.utils.parseEther(RENT_FEE.toString())
-
-export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, signature, address }: {
+export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, signature, address, token = 'eth' }: {
     withdrawAmountInput: number,
     recipient: string,
     keyBasePath: string,
     signature: string,
-    address: string
+    address: string,
+    token?: 'eth' | 'usdc',
 }) {
-
     if (!ethers.utils.isAddress(recipient)) {
         throw new Error(`Invalid recipient address: ${recipient}`);
     }
 
-    const etherPoolAddress = CONTRACT_ADDRESS;
-    if (!etherPoolAddress) {
-        throw new Error('Missing CONTRACT_ADDRESS in environment');
+    const isUsdc = token === 'usdc';
+
+    const remoteConfig = await getRemoteConfig();
+    const minWithdrawalEth = remoteConfig.minimum_withdrawal.eth;
+    const minWithdrawalUsdc = remoteConfig.minimum_withdrawal.usdc;
+    const rentFeeEth = remoteConfig.rent_fees.eth;
+    const rentFeeUsdc = remoteConfig.rent_fees.usdc;
+    const feeRate = remoteConfig.fee_rate;
+
+    const ETH_FLAT_FEE = ethers.utils.parseEther(rentFeeEth.toFixed(18));
+    const USDC_FLAT_FEE = ethers.utils.parseUnits(rentFeeUsdc.toFixed(6), 6);
+
+    if (isUsdc) {
+        if (withdrawAmountInput < minWithdrawalUsdc) {
+            throw new Error(`Withdrawal amount must be at least ${minWithdrawalUsdc} USDC`);
+        }
+    } else {
+        if (withdrawAmountInput < minWithdrawalEth) {
+            throw new Error(`Withdrawal amount must be at least ${minWithdrawalEth} ETH`);
+        }
     }
 
-    // check if withdrawAmountInput is above minimum
-    if (withdrawAmountInput < MIN_WITHDRAWAL_AMOUNT) {
-        throw new Error(`Withdrawal amount must be at least ${MIN_WITHDRAWAL_AMOUNT} ETH`);
-    }
+    const poolAddress = ethers.utils.getAddress(isUsdc ? PRIVATE_USDC_CONTRACT_ADDRESS : CONTRACT_ADDRESS);
+    const abi = isUsdc ? ERCPoolAbi : EtherPoolAbi;
+    const feeRecipient = FEE_RECIPIENT_ADDRESS;
 
-    const feeRecipientEnv = FEE_RECIPIENT_ADDRESS;
-    const contractAddress = ethers.utils.getAddress(etherPoolAddress);
-
-    logger.debug(`Withdrawing ${withdrawAmountInput} ETH to recipient: ${recipient}`);
+    logger.debug(`Withdrawing ${withdrawAmountInput} ${isUsdc ? 'USDC' : 'ETH'} to recipient: ${recipient}`);
 
     const { encryptionKey, keypair } = deriveKeys(signature);
     logger.debug(`UTXO pubkey: ${toFixedHex(keypair.pubkey)}`);
 
     const readProvider = new ethers.providers.JsonRpcProvider(BASE_SEPOLIA_RPC);
+    const pool = new ethers.Contract(poolAddress, abi, readProvider);
 
-    const etherPool = new ethers.Contract(contractAddress, EtherPoolAbi, readProvider);
-
-    const withdrawAmount = ethers.utils.parseEther(withdrawAmountInput.toString());
+    const withdrawAmount = isUsdc
+        ? ethers.utils.parseUnits(withdrawAmountInput.toString(), 6)
+        : ethers.utils.parseEther(withdrawAmountInput.toString());
 
     // Scan on-chain events to find unspent UTXOs
     logger.info('loading utxos')
     const unspent = await findUnspentUtxos({
-        etherPool,
+        etherPool: pool,
         encryptionKey,
         keypair,
-        address
+        address,
+        token,
     });
     logger.debug(`Unspent UTXOs found: ${unspent.length}`);
 
@@ -66,30 +81,38 @@ export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, si
     }
 
     const inputSum = inputs.reduce((sum, u) => sum.add(u.amount), BigNumber.from(0));
-    logger.debug(`Input UTXOs: ${inputs.length} (total: ${ethers.utils.formatEther(inputSum)} ETH)`);
+    const flatFee = isUsdc ? USDC_FLAT_FEE : ETH_FLAT_FEE;
+    const fee = flatFee.add(withdrawAmount.mul(feeRate).div(10000));
 
-    const feeRecipient = feeRecipientEnv;
-    const fee = FLAT_FEE.add(withdrawAmount.mul(FEE_RATE).div(10000));
-    logger.debug(`Fee recipient: ${feeRecipient}`);
-    logger.debug(`Fee: ${ethers.utils.formatEther(fee)} ETH (0.00025 + 0.35%)`);
-
-    // withdrawAmount should includes fee
-    let realAriveAmount = withdrawAmount.sub(fee);
-    logger.debug(`Amount to arrive at recipient: ${ethers.utils.formatEther(realAriveAmount)} ETH`);
+    if (isUsdc) {
+        logger.debug(`Input UTXOs: ${inputs.length} (total: ${ethers.utils.formatUnits(inputSum, 6)} USDC)`);
+        logger.debug(`Fee: ${ethers.utils.formatUnits(fee, 6)} USDC (${rentFeeUsdc} USDC + ${feeRate / 100}%)`);
+        logger.debug(`Amount to arrive at recipient: ${ethers.utils.formatUnits(withdrawAmount.sub(fee), 6)} USDC`);
+    } else {
+        logger.debug(`Input UTXOs: ${inputs.length} (total: ${ethers.utils.formatEther(inputSum)} ETH)`);
+        logger.debug(`Fee: ${ethers.utils.formatEther(fee)} ETH (${rentFeeEth} + ${feeRate / 100}%)`);
+        logger.debug(`Amount to arrive at recipient: ${ethers.utils.formatEther(withdrawAmount.sub(fee))} ETH`);
+    }
 
     if (inputSum.lt(withdrawAmount)) {
-        throw new Error(`Insufficient balance. Have ${ethers.utils.formatEther(inputSum)} ETH, need ${ethers.utils.formatEther(withdrawAmount)} ETH (${withdrawAmountInput}).`);
+        const have = isUsdc ? ethers.utils.formatUnits(inputSum, 6) : ethers.utils.formatEther(inputSum);
+        const need = isUsdc ? ethers.utils.formatUnits(withdrawAmount, 6) : ethers.utils.formatEther(withdrawAmount);
+        throw new Error(`Insufficient balance. Have ${have}, need ${need} (${withdrawAmountInput}).`);
     }
 
     const changeAmount = inputSum.sub(withdrawAmount);
     const outputs: Utxo[] = [];
 
     if (changeAmount.gt(0)) {
-        outputs.push(new Utxo({ amount: changeAmount, keypair }));
-        logger.debug(`Change UTXO: ${ethers.utils.formatEther(changeAmount)} ETH`);
+        // Change UTXOs for USDC must carry the same mintAddress
+        const mintAddress = isUsdc ? BigNumber.from(USDC_CONTRACT_ADDRESS) : BigNumber.from(0);
+        outputs.push(new Utxo({ amount: changeAmount, keypair, mintAddress }));
+        const formattedChange = isUsdc
+            ? `${ethers.utils.formatUnits(changeAmount, 6)} USDC`
+            : `${ethers.utils.formatEther(changeAmount)} ETH`;
+        logger.debug(`Change UTXO: ${formattedChange}`);
     }
 
-    logger.debug(`\nWithdrawing ${realAriveAmount} ETH to ${recipient}...`);
     logger.info('generating ZK proof')
 
     const { args, extData } = await prepareTransaction({
@@ -100,18 +123,14 @@ export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, si
         feeRecipient,
         encryptionKey,
         keyBasePath,
+        token,
     });
 
-    logger.info(`submitting transaction to relayer...`);
+    logger.info('submitting transaction to relayer...');
     const response = await fetch(`${INDEXER_URL}/relayer/withdraw`, {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-            args,
-            extData
-        }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ args, extData, token }),
     });
 
     const result = await response.json();
@@ -124,31 +143,29 @@ export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, si
     }
 
     if (changeAmount.gt(0)) {
-        logger.debug(`\nChange UTXO created (${ethers.utils.formatEther(changeAmount)} ETH)`);
+        const formattedChange = isUsdc
+            ? `${ethers.utils.formatUnits(changeAmount, 6)} USDC`
+            : `${ethers.utils.formatEther(changeAmount)} ETH`;
+        logger.debug(`\nChange UTXO created (${formattedChange})`);
     }
 
     logger.info('confirming transaction')
     let retryTimes = 0
-    let itv = 2
-    // const encryptedOutputStr = Buffer.from(extData.encryptedOutput1).toString('hex')
+    const itv = 2
     let start = Date.now()
     while (true) {
         logger.debug('Confirming transaction..')
         logger.debug(`retryTimes: ${retryTimes}`)
         await new Promise(resolve => setTimeout(resolve, itv * 1000));
         logger.debug('Fetching updated onchain state...');
-        // post to /check_encrypted_output with body encryptedOutput: extData.encryptedOutput1
         let res = await fetch(INDEXER_URL + '/check_encrypted_output', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ encryptedOutput: extData.encryptedOutput1 }),
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ encryptedOutput: extData.encryptedOutput1, token }),
         });
         let resJson = await res.json()
         if (resJson.exists) {
-            logger.debug(`Top up successfully in ${((Date.now() - start) / 1000).toFixed(2)} seconds!`);
-            // break while true loop
+            logger.debug(`Withdrawal confirmed in ${((Date.now() - start) / 1000).toFixed(2)} seconds!`);
             break;
         }
         if (retryTimes >= 10) {
@@ -158,6 +175,5 @@ export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, si
     }
 
     logger.debug('\nwithdrawal successful!');
-
     return result.txHash
 }

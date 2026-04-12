@@ -13,7 +13,7 @@ const RPC_URL = 'https://mainnet.base.org';
 
 function parseRequiredAmount(amountArg: string | undefined, testType: 'deposit' | 'withdraw') {
     if (!amountArg) {
-        throw new Error(`Missing amount. Usage: bun example/test.ts ${testType} <amount_in_eth>`);
+        throw new Error(`Missing amount. Usage: bun example/eth.ts ${testType} <amount_in_eth>`);
     }
 
     const amount = Number(amountArg);
@@ -84,11 +84,11 @@ async function testSDK(testType: string, amountArg?: string) {
         }
 
         else {
-            console.log('Usage: bun example/test.ts <balance|deposit|withdraw> [amount_in_eth]');
+            console.log('Usage: bun example/eth.ts <balance|deposit|withdraw> [amount_in_eth]');
             console.log('Examples:');
-            console.log('  bun example/test.ts balance');
-            console.log('  bun example/test.ts deposit 0.001');
-            console.log('  bun example/test.ts withdraw 0.001');
+            console.log('  bun example/eth.ts balance');
+            console.log('  bun example/eth.ts deposit 0.001');
+            console.log('  bun example/eth.ts withdraw 0.001');
         }
 
 
@@ -105,9 +105,9 @@ const amountArg = process.argv[3];
 if (testType) {
     testSDK(testType, amountArg);
 } else {
-    console.log('Usage: bun example/test.ts <balance|deposit|withdraw> [amount_in_eth]');
+    console.log('Usage: bun example/eth.ts <balance|deposit|withdraw> [amount_in_eth]');
     console.log('Examples:');
-    console.log('  bun example/test.ts balance');
-    console.log('  bun example/test.ts deposit 0.001');
-    console.log('  bun example/test.ts withdraw 0.001');
+    console.log('  bun example/eth.ts balance');
+    console.log('  bun example/eth.ts deposit 0.001');
+    console.log('  bun example/eth.ts withdraw 0.001');
 }

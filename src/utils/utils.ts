@@ -7,7 +7,8 @@ import { logger } from './logger.js';
 import { prove } from './prover.js';
 import { Utxo } from './utxo.js';
 
-const storage = new UniversalStorage('PrivacyCashDB', 'evmProd');
+const ethStorage = new UniversalStorage('PrivacyCashDB', 'evmProd');
+const usdcStorage = new UniversalStorage('PrivacyCashDB', 'evmUsdcProd');
 
 export const FIELD_SIZE = BigNumber.from(
     '21888242871839275222246405745257275088548364400416034343698204186575808495617',
@@ -22,6 +23,7 @@ export function poseidonHash(items: any[]): BigNumber {
 }
 
 export const poseidonHash2 = (a: any, b: any) => poseidonHash([a, b]);
+
 
 /** Generate random number of specified byte length */
 export const randomBN = (nbytes = 31) => BigNumber.from(crypto.randomBytes(nbytes));
@@ -96,6 +98,7 @@ export async function getProof({
     feeRecipient,
     encryptionKey,
     keyBasePath,
+    token = 'eth',
 }: {
     inputs: Utxo[];
     outputs: Utxo[];
@@ -105,12 +108,13 @@ export async function getProof({
     feeRecipient: string;
     encryptionKey: Buffer;
     keyBasePath: string;
+    token?: 'eth' | 'usdc';
 }) {
     let inputMerklePathIndices: number[] = [];
     let inputMerklePathElements: any[] = [];
 
     // fetch /merkle/root from indexer url
-    const res = await fetch(`${INDEXER_URL}/merkle/root`);
+    const res = await fetch(`${INDEXER_URL}/merkle/root?token=${token}`);
     if (!res.ok) {
         throw new Error(`Failed to fetch merkle root: ${res.status} ${res.statusText}`);
     }
@@ -122,7 +126,7 @@ export async function getProof({
             let res = await fetch(`${INDEXER_URL}/commitment/`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ commitment: toFixedHex(input.getCommitment()) }),
+                body: JSON.stringify({ commitment: toFixedHex(input.getCommitment()), token }),
             });
             if (!res.ok) {
                 throw new Error(`Failed to fetch commitment info`);
@@ -197,6 +201,7 @@ export async function prepareTransaction({
     feeRecipient = '0x44eb9939cfdE7C394f1632C6890191d695f0a3ce',
     encryptionKey,
     keyBasePath,
+    token = 'eth',
 }: {
     inputs?: Utxo[];
     outputs?: Utxo[];
@@ -205,13 +210,20 @@ export async function prepareTransaction({
     feeRecipient?: string;
     encryptionKey: Buffer;
     keyBasePath: string;
+    token?: 'eth' | 'usdc';
 }) {
     if (inputs.length > 2 || outputs.length > 2) {
         throw new Error('Only 2 inputs and 2 outputs are supported');
     }
 
-    while (inputs.length < 2) inputs.push(new Utxo());
-    while (outputs.length < 2) outputs.push(new Utxo());
+    // Derive mintAddress from actual UTXOs so dummy padding doesn't break circuit constraints
+    const effectiveMintAddress =
+        inputs.find(u => u.amount.gt(0))?.mintAddress ??
+        outputs.find(u => u.amount.gt(0))?.mintAddress ??
+        BigNumber.from(0);
+
+    while (inputs.length < 2) inputs.push(new Utxo({ mintAddress: effectiveMintAddress }));
+    while (outputs.length < 2) outputs.push(new Utxo({ mintAddress: effectiveMintAddress }));
 
     let extAmount = outputs.reduce((sum, x) => sum.add(x.amount), BigNumber.from(0))
         .sub(inputs.reduce((sum, x) => sum.add(x.amount), BigNumber.from(0)))
@@ -226,6 +238,7 @@ export async function prepareTransaction({
         feeRecipient,
         encryptionKey,
         keyBasePath,
+        token,
     });
 
     return { extData, args };
@@ -237,13 +250,16 @@ export async function findUnspentUtxos({
     encryptionKey,
     keypair,
     start = 0,
+    token = 'eth',
 }: {
     address: string;
     etherPool: ethers.Contract;
     encryptionKey: Buffer;
     keypair: any;
     start?: number;
+    token?: 'eth' | 'usdc';
 }) {
+    const storage = token === 'usdc' ? usdcStorage : ethStorage;
     await storage.init();
     const offsetKey = `offset_${address}`;
     const knownKey = `keo_${address}`;
@@ -275,7 +291,7 @@ export async function findUnspentUtxos({
     const limit = 1000;
     let hasMore = true;
     while (hasMore) {
-        let url = `${INDEXER_URL}/get_encrypted?start=${startIndex}&end=${startIndex + limit}`;
+        let url = `${INDEXER_URL}/get_encrypted?start=${startIndex}&end=${startIndex + limit}&token=${token}`;
         logger.debug(`Fetching encrypted UTXOs from indexer: ${url}`);
         const res = await fetch(url);
         if (!res.ok) {
@@ -334,7 +350,8 @@ export async function findUnspentUtxos({
     return unspent
 }
 
-export async function clearCache(address: string): Promise<void> {
+export async function clearCache(address: string, token: 'eth' | 'usdc' = 'eth'): Promise<void> {
+    const storage = token === 'usdc' ? usdcStorage : ethStorage;
     await storage.init();
     await storage.set(`offset_${address}`, 0);
     await storage.set(`keo_${address}`, []);
