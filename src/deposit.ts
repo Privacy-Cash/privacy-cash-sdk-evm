@@ -57,9 +57,12 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
         });
         let resJson = await res.json()
         if (resJson.isRisk) {
-            throw new Error('Your wallet address is risky. Service rejected.');
+            throw new Error('Your wallet address is risky. Service rejected.', { cause: { type: 'RISKY_ADDRESS' } });
         }
-    } catch (err) {
+    } catch (err: any) {
+        if (err.cause?.type === 'RISKY_ADDRESS') {
+            throw err;
+        }
         logger.error('Failed to screen address, but proceeding with deposit. Error:', err);
     }
     logger.debug('Address screening passed');
@@ -104,7 +107,7 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
 
     const partialTx = await etherPool.populateTransaction.transact(args, extData, {
         value: depositAmount,
-        gasLimit: 3000000,
+        gasLimit: 2000000,
     });
     const [network, nonce, feeData] = await Promise.all([
         readProvider.getNetwork(),
