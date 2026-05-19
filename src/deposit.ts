@@ -1,25 +1,30 @@
 import { BigNumber, ethers } from 'ethers';
 import ERCPoolAbi from './utils/ERCPool.abi.json' with { type: 'json' };
 import EtherPoolAbi from './utils/EtherPool.abi.json' with { type: 'json' };
-import { BASE_SEPOLIA_RPC, CONTRACT_ADDRESS, INDEXER_URL, PRIVATE_USDC_CONTRACT_ADDRESS, USDC_CONTRACT_ADDRESS } from './utils/constants.js';
 import { deriveKeys } from './utils/encryption.js';
 import { logger } from './utils/logger.js';
+import { NetworkConfig, resolveNetwork } from './utils/networkConfig.js';
 import { getRemoteConfig } from './utils/remoteConfig.js';
 import { findUnspentUtxos, prepareTransaction, toFixedHex } from './utils/utils.js';
 import { Utxo } from './utils/utxo.js';
 
-export async function deposit({ depositAmountInput, keyBasePath, signature, address, txSender, token = 'eth' }: {
+export async function deposit({ depositAmountInput, keyBasePath, signature, address, txSender, token = 'eth', network }: {
     depositAmountInput: number,
     keyBasePath: string,
     signature: string,
     address: string,
     txSender: any,
     token?: 'eth' | 'usdc',
+    network?: NetworkConfig | number,
 }) {
-    const readProvider = new ethers.providers.JsonRpcProvider(BASE_SEPOLIA_RPC);
+    const net = resolveNetwork(network);
+    const readProvider = new ethers.providers.JsonRpcProvider(net.rpcUrl, {
+        name: net.chainKey,
+        chainId: net.chainId,
+    });
     const isUsdc = token === 'usdc';
 
-    const remoteConfig = await getRemoteConfig();
+    const remoteConfig = await getRemoteConfig(net);
     const minDepositEth = remoteConfig.minimum_deposit.eth;
     const minDepositUsdc = remoteConfig.minimum_deposit.usdc;
 
@@ -33,7 +38,7 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
         }
     }
 
-    const poolAddress = ethers.utils.getAddress(isUsdc ? PRIVATE_USDC_CONTRACT_ADDRESS : CONTRACT_ADDRESS);
+    const poolAddress = ethers.utils.getAddress(isUsdc ? net.usdcPoolAddress : net.etherPoolAddress);
     const abi = isUsdc ? ERCPoolAbi : EtherPoolAbi;
 
     logger.debug(`Depositor: ${address}`);
@@ -65,7 +70,7 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
     logger.info('screening wallet')
     logger.debug(`screening address ${address}`)
     try {
-        let res = await fetch(INDEXER_URL + '/screen_address', {
+        let res = await fetch(net.indexerUrl + '/screen_address', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ address }),
@@ -90,6 +95,7 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
         keypair,
         address,
         token,
+        network: net,
     });
     logger.debug(`Unspent UTXOs found: ${unspent.length}`);
 
@@ -106,7 +112,7 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
 
     const outputAmount = inputSum.add(depositAmount);
     // For USDC, embed the token contract address as mintAddress in the UTXO
-    const mintAddress = isUsdc ? BigNumber.from(USDC_CONTRACT_ADDRESS) : BigNumber.from(0);
+    const mintAddress = isUsdc ? BigNumber.from(net.usdcTokenAddress) : BigNumber.from(0);
     const outputUtxo = new Utxo({ amount: outputAmount, keypair, mintAddress });
 
     const formattedOutput = isUsdc
@@ -120,7 +126,7 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
         // is mined the root can advance while waiting, causing proof verification
         // to fail on-chain.
         const erc20Abi = ['function approve(address spender, uint256 amount) returns (bool)'];
-        const erc20 = new ethers.Contract(USDC_CONTRACT_ADDRESS, erc20Abi, readProvider);
+        const erc20 = new ethers.Contract(net.usdcTokenAddress, erc20Abi, readProvider);
         const approveTx = await erc20.populateTransaction.approve(poolAddress, depositAmount);
         const [network, feeData] = await Promise.all([
             readProvider.getNetwork(),
@@ -147,6 +153,7 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
             encryptionKey,
             keyBasePath,
             token,
+            network: net,
         });
 
         // Step 3: send transact tx (no ETH value for ERC pool)
@@ -164,7 +171,7 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
         const tx = await txSender(unsignedTx);
 
         logger.info('confirming transaction');
-        await confirmEncryptedOutput(extData.encryptedOutput1, token);
+        await confirmEncryptedOutput(extData.encryptedOutput1, token, net);
         return tx;
     } else {
         logger.info('generating ZK proof')
@@ -174,6 +181,7 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
             encryptionKey,
             keyBasePath,
             token,
+            network: net,
         });
         const partialTx = await pool.populateTransaction.transact(args, extData, {
             value: depositAmount,
@@ -199,32 +207,33 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
         logger.info('waiting for user signature [deposit]');
         const tx = await txSender(unsignedTx);
         logger.info('confirming transaction');
-        await confirmEncryptedOutput(extData.encryptedOutput1, token);
+        await confirmEncryptedOutput(extData.encryptedOutput1, token, net);
         return tx;
     }
 }
 
-async function confirmEncryptedOutput(encryptedOutput1: string, token: 'eth' | 'usdc') {
+async function confirmEncryptedOutput(encryptedOutput1: string, token: 'eth' | 'usdc', net: NetworkConfig) {
     logger.debug('verifying transaction on indexer...', encryptedOutput1);
     let retryTimes = 0;
-    const itv = 2;
+    const intervalMs = 3000;
+    const maxRetries = 10;
     const start = Date.now();
     while (true) {
         logger.debug('Confirming transaction..');
         logger.debug(`retryTimes: ${retryTimes}`);
-        await new Promise(resolve => setTimeout(resolve, itv * 1000));
+        await new Promise(resolve => setTimeout(resolve, intervalMs));
         logger.debug('Fetching updated onchain state...');
-        let res = await fetch(INDEXER_URL + '/check_encrypted_output', {
+        let res = await fetch(net.indexerUrl + '/check_encrypted_output', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ encryptedOutput: encryptedOutput1, token }),
+            body: JSON.stringify({ encryptedOutput: encryptedOutput1, token, chain: net.chainKey }),
         });
         let resJson = await res.json();
         if (resJson.exists) {
             logger.debug(`Top up successfully in ${((Date.now() - start) / 1000).toFixed(2)} seconds!`);
             break;
         }
-        if (retryTimes >= 10) {
+        if (retryTimes >= maxRetries) {
             throw new Error('Refresh the page to see latest balance.');
         }
         retryTimes++;

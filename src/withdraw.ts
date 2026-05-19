@@ -1,28 +1,30 @@
 import { BigNumber, ethers } from 'ethers';
 import ERCPoolAbi from './utils/ERCPool.abi.json' with { type: 'json' };
 import EtherPoolAbi from './utils/EtherPool.abi.json' with { type: 'json' };
-import { BASE_SEPOLIA_RPC, CONTRACT_ADDRESS, FEE_RECIPIENT_ADDRESS, INDEXER_URL, PRIVATE_USDC_CONTRACT_ADDRESS, USDC_CONTRACT_ADDRESS } from './utils/constants.js';
 import { deriveKeys } from './utils/encryption.js';
 import { logger } from './utils/logger.js';
+import { NetworkConfig, resolveNetwork } from './utils/networkConfig.js';
 import { getRemoteConfig } from './utils/remoteConfig.js';
 import { findUnspentUtxos, prepareTransaction, toFixedHex } from './utils/utils.js';
 import { Utxo } from './utils/utxo.js';
 
-export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, signature, address, token = 'eth' }: {
+export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, signature, address, token = 'eth', network }: {
     withdrawAmountInput: number,
     recipient: string,
     keyBasePath: string,
     signature: string,
     address: string,
     token?: 'eth' | 'usdc',
+    network?: NetworkConfig | number,
 }) {
     if (!ethers.utils.isAddress(recipient)) {
         throw new Error(`Invalid recipient address: ${recipient}`);
     }
 
+    const net = resolveNetwork(network);
     const isUsdc = token === 'usdc';
 
-    const remoteConfig = await getRemoteConfig();
+    const remoteConfig = await getRemoteConfig(net);
     const minWithdrawalEth = remoteConfig.minimum_withdrawal.eth;
     const minWithdrawalUsdc = remoteConfig.minimum_withdrawal.usdc;
     const rentFeeEth = remoteConfig.rent_fees.eth;
@@ -42,16 +44,19 @@ export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, si
         }
     }
 
-    const poolAddress = ethers.utils.getAddress(isUsdc ? PRIVATE_USDC_CONTRACT_ADDRESS : CONTRACT_ADDRESS);
+    const poolAddress = ethers.utils.getAddress(isUsdc ? net.usdcPoolAddress : net.etherPoolAddress);
     const abi = isUsdc ? ERCPoolAbi : EtherPoolAbi;
-    const feeRecipient = FEE_RECIPIENT_ADDRESS;
+    const feeRecipient = net.feeRecipientAddress;
 
     logger.debug(`Withdrawing ${withdrawAmountInput} ${isUsdc ? 'USDC' : 'ETH'} to recipient: ${recipient}`);
 
     const { encryptionKey, keypair } = deriveKeys(signature);
     logger.debug(`UTXO pubkey: ${toFixedHex(keypair.pubkey)}`);
 
-    const readProvider = new ethers.providers.JsonRpcProvider(BASE_SEPOLIA_RPC);
+    const readProvider = new ethers.providers.JsonRpcProvider(net.rpcUrl, {
+        name: net.chainKey,
+        chainId: net.chainId,
+    });
     const pool = new ethers.Contract(poolAddress, abi, readProvider);
 
     const withdrawAmount = isUsdc
@@ -66,6 +71,7 @@ export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, si
         keypair,
         address,
         token,
+        network: net,
     });
     logger.debug(`Unspent UTXOs found: ${unspent.length}`);
 
@@ -105,7 +111,7 @@ export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, si
 
     if (changeAmount.gt(0)) {
         // Change UTXOs for USDC must carry the same mintAddress
-        const mintAddress = isUsdc ? BigNumber.from(USDC_CONTRACT_ADDRESS) : BigNumber.from(0);
+        const mintAddress = isUsdc ? BigNumber.from(net.usdcTokenAddress) : BigNumber.from(0);
         outputs.push(new Utxo({ amount: changeAmount, keypair, mintAddress }));
         const formattedChange = isUsdc
             ? `${ethers.utils.formatUnits(changeAmount, 6)} USDC`
@@ -124,13 +130,14 @@ export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, si
         encryptionKey,
         keyBasePath,
         token,
+        network: net,
     });
 
     logger.info('submitting transaction to relayer...');
-    const response = await fetch(`${INDEXER_URL}/relayer/withdraw`, {
+    const response = await fetch(`${net.indexerUrl}/relayer/withdraw`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ args, extData, token }),
+        body: JSON.stringify({ args, extData, token, chain: net.chainKey }),
     });
 
     const result = await response.json();
@@ -151,17 +158,17 @@ export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, si
 
     logger.info('confirming transaction')
     let retryTimes = 0
-    const itv = 2
+    const itv = 3
     let start = Date.now()
     while (true) {
         logger.debug('Confirming transaction..')
         logger.debug(`retryTimes: ${retryTimes}`)
         await new Promise(resolve => setTimeout(resolve, itv * 1000));
         logger.debug('Fetching updated onchain state...');
-        let res = await fetch(INDEXER_URL + '/check_encrypted_output', {
+        let res = await fetch(net.indexerUrl + '/check_encrypted_output', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ encryptedOutput: extData.encryptedOutput1, token }),
+            body: JSON.stringify({ encryptedOutput: extData.encryptedOutput1, token, chain: net.chainKey }),
         });
         let resJson = await res.json()
         if (resJson.exists) {

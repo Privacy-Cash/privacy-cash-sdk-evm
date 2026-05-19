@@ -1,5 +1,5 @@
 import { ethers } from 'ethers';
-import { deposit, getBalance, withdraw } from '../src/index.js';
+import { BASE_NETWORK, deposit, getBalance, withdraw } from '../src/index.js';
 import { SIGN_PRIVACY_MESSAGE } from '../src/utils/constants.js';
 
 if (!process.env.PRIVATE_KEY) {
@@ -8,8 +8,7 @@ if (!process.env.PRIVATE_KEY) {
 }
 
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
-
-const RPC_URL = 'https://mainnet.base.org';
+const network = BASE_NETWORK;
 
 function parseRequiredAmount(amountArg: string | undefined, testType: 'deposit' | 'withdraw') {
     if (!amountArg) {
@@ -28,9 +27,9 @@ async function testSDK(testType: string, amountArg?: string) {
     console.log('--- SDK Testing Started ---');
 
     // Setup provider and signer
-    const provider = new ethers.providers.JsonRpcProvider(RPC_URL, {
-        name: 'base',
-        chainId: 8453,
+    const provider = new ethers.providers.JsonRpcProvider(network.rpcUrl, {
+        name: network.chainKey,
+        chainId: network.chainId,
     });
     const signer = new ethers.Wallet(PRIVATE_KEY, provider);
 
@@ -50,7 +49,7 @@ async function testSDK(testType: string, amountArg?: string) {
             console.log(`Wallet balance: ${ethers.utils.formatEther(balance)} ETH`);
 
             console.log('\n Checking Balance...');
-            const res = await getBalance({ signature, address: await signer.getAddress() });
+            const res = await getBalance({ signature, address: await signer.getAddress(), network });
             console.log(`Initial total unspent: ${res.balance} ETH`);
         }
 
@@ -63,7 +62,7 @@ async function testSDK(testType: string, amountArg?: string) {
                 await tx.wait();
                 return tx.hash;
             }
-            const tx = await deposit({ txSender, depositAmountInput: depositAmount, keyBasePath: './circuits/transaction', signature, address: await signer.getAddress() });
+            const tx = await deposit({ txSender, depositAmountInput: depositAmount, keyBasePath: './circuits/transaction', signature, address: await signer.getAddress(), network });
             console.log(`Deposit transaction sent! TX`, tx);
         }
 
@@ -71,7 +70,7 @@ async function testSDK(testType: string, amountArg?: string) {
         else if (testType === 'withdraw') {
             const withdrawAmount = parseRequiredAmount(amountArg, 'withdraw');
             console.log('\n Performing Withdrawal...');
-            const withdrawResult = await withdraw({ withdrawAmountInput: withdrawAmount, recipient: await signer.getAddress(), keyBasePath: './circuits/transaction', signature, address: await signer.getAddress() });
+            const withdrawResult = await withdraw({ withdrawAmountInput: withdrawAmount, recipient: await signer.getAddress(), keyBasePath: './circuits/transaction', signature, address: await signer.getAddress(), network });
             console.log(`Withdrawal successful! TX: ${withdrawResult}`);
         }
 
@@ -79,7 +78,7 @@ async function testSDK(testType: string, amountArg?: string) {
         else if (testType === 'clear') {
             console.log('\n Clearing Cache...');
             const { clearCache } = await import('../src/utils/utils.js');
-            await clearCache(await signer.getAddress());
+            await clearCache(await signer.getAddress(), 'eth', network);
             console.log('Cache cleared successfully!');
         }
 

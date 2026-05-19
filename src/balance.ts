@@ -1,16 +1,26 @@
 import { BigNumber, ethers } from 'ethers';
 import ERCPoolAbi from './utils/ERCPool.abi.json' with { type: 'json' };
 import EtherPoolAbi from './utils/EtherPool.abi.json' with { type: 'json' };
-import { BASE_SEPOLIA_RPC, CONTRACT_ADDRESS, PRIVATE_USDC_CONTRACT_ADDRESS } from './utils/constants.js';
 import { deriveKeys } from './utils/encryption.js';
 import { logger } from './utils/logger.js';
+import { NetworkConfig, resolveNetwork } from './utils/networkConfig.js';
 import { findUnspentUtxos, toFixedHex } from './utils/utils.js';
 
-export async function getBalance({ signature, address, offset, token = 'eth' }: { signature: string, address: string, offset?: number, token?: 'eth' | 'usdc' }) {
-    const readProvider = new ethers.providers.JsonRpcProvider(BASE_SEPOLIA_RPC);
+export async function getBalance({ signature, address, offset, token = 'eth', network }: {
+    signature: string,
+    address: string,
+    offset?: number,
+    token?: 'eth' | 'usdc',
+    network?: NetworkConfig | number,
+}) {
+    const net = resolveNetwork(network);
+    const readProvider = new ethers.providers.JsonRpcProvider(net.rpcUrl, {
+        name: net.chainKey,
+        chainId: net.chainId,
+    });
 
     const isUsdc = token === 'usdc';
-    const contractAddress = ethers.utils.getAddress(isUsdc ? PRIVATE_USDC_CONTRACT_ADDRESS : CONTRACT_ADDRESS);
+    const contractAddress = ethers.utils.getAddress(isUsdc ? net.usdcPoolAddress : net.etherPoolAddress);
     const abi = isUsdc ? ERCPoolAbi : EtherPoolAbi;
 
     logger.debug(`Address: ${address}`);
@@ -36,6 +46,7 @@ export async function getBalance({ signature, address, offset, token = 'eth' }: 
         address,
         start: offset || 0,
         token,
+        network: net,
     });
 
     logger.debug(`Unspent UTXOs: ${unspent.length}`);

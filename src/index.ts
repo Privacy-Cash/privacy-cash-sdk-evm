@@ -8,3 +8,9 @@ export { withdraw } from './withdraw.js'
 export { FEE_RECIPIENT_ADDRESS, INDEXER_URL, PRIVATE_USDC_CONTRACT_ADDRESS, USDC_CONTRACT_ADDRESS, USDC_DECIMALS } from './utils/constants.js'
 export { clearCache } from './utils/utils.js'
 
+export {
+    BASE_NETWORK,
+    ETH_NETWORK, getDefaultNetworkConfig, getNetworkConfig, NETWORKS, resolveNetwork
+} from './utils/networkConfig.js'
+export type { NetworkConfig } from './utils/networkConfig.js'
+
