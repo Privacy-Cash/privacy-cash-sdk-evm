@@ -3,7 +3,7 @@ import ERCPoolAbi from './utils/ERCPool.abi.json' with { type: 'json' };
 import EtherPoolAbi from './utils/EtherPool.abi.json' with { type: 'json' };
 import { deriveKeys } from './utils/encryption.js';
 import { logger } from './utils/logger.js';
-import { NetworkConfig, resolveNetwork } from './utils/networkConfig.js';
+import { NetworkConfig, PrivacyToken, getErc20TokenConfig, resolveNetwork } from './utils/networkConfig.js';
 import { getRemoteConfig } from './utils/remoteConfig.js';
 import { findUnspentUtxos, prepareTransaction, toFixedHex } from './utils/utils.js';
 import { Utxo } from './utils/utxo.js';
@@ -14,7 +14,7 @@ export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, si
     keyBasePath: string,
     signature: string,
     address: string,
-    token?: 'eth' | 'usdc',
+    token?: PrivacyToken,
     network?: NetworkConfig | number,
 }) {
     if (!ethers.utils.isAddress(recipient)) {
@@ -22,7 +22,10 @@ export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, si
     }
 
     const net = resolveNetwork(network);
-    const isUsdc = token === 'usdc';
+    const erc20Token = getErc20TokenConfig(net, token);
+    const isErc20 = erc20Token !== null;
+    const tokenSymbol = erc20Token?.symbol ?? 'ETH';
+    const tokenDecimals = erc20Token?.decimals ?? 18;
 
     const remoteConfig = await getRemoteConfig(net);
     const minWithdrawalEth = remoteConfig.minimum_withdrawal.eth;
@@ -32,11 +35,11 @@ export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, si
     const feeRate = remoteConfig.fee_rate;
 
     const ETH_FLAT_FEE = ethers.utils.parseEther(rentFeeEth.toFixed(18));
-    const USDC_FLAT_FEE = ethers.utils.parseUnits(rentFeeUsdc.toFixed(6), 6);
+    const ERC20_FLAT_FEE = ethers.utils.parseUnits(rentFeeUsdc.toFixed(tokenDecimals), tokenDecimals);
 
-    if (isUsdc) {
+    if (isErc20) {
         if (withdrawAmountInput < minWithdrawalUsdc) {
-            throw new Error(`Withdrawal amount must be at least ${minWithdrawalUsdc} USDC`);
+            throw new Error(`Withdrawal amount must be at least ${minWithdrawalUsdc} ${tokenSymbol}`);
         }
     } else {
         if (withdrawAmountInput < minWithdrawalEth) {
@@ -44,11 +47,11 @@ export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, si
         }
     }
 
-    const poolAddress = ethers.utils.getAddress(isUsdc ? net.usdcPoolAddress : net.etherPoolAddress);
-    const abi = isUsdc ? ERCPoolAbi : EtherPoolAbi;
+    const poolAddress = ethers.utils.getAddress(erc20Token ? erc20Token.poolAddress : net.etherPoolAddress);
+    const abi = isErc20 ? ERCPoolAbi : EtherPoolAbi;
     const feeRecipient = net.feeRecipientAddress;
 
-    logger.debug(`Withdrawing ${withdrawAmountInput} ${isUsdc ? 'USDC' : 'ETH'} to recipient: ${recipient}`);
+    logger.debug(`Withdrawing ${withdrawAmountInput} ${tokenSymbol} to recipient: ${recipient}`);
 
     const { encryptionKey, keypair } = deriveKeys(signature);
     logger.debug(`UTXO pubkey: ${toFixedHex(keypair.pubkey)}`);
@@ -59,8 +62,8 @@ export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, si
     });
     const pool = new ethers.Contract(poolAddress, abi, readProvider);
 
-    const withdrawAmount = isUsdc
-        ? ethers.utils.parseUnits(withdrawAmountInput.toString(), 6)
+    const withdrawAmount = isErc20
+        ? ethers.utils.parseUnits(withdrawAmountInput.toString(), tokenDecimals)
         : ethers.utils.parseEther(withdrawAmountInput.toString());
 
     // Scan on-chain events to find unspent UTXOs
@@ -87,13 +90,13 @@ export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, si
     }
 
     const inputSum = inputs.reduce((sum, u) => sum.add(u.amount), BigNumber.from(0));
-    const flatFee = isUsdc ? USDC_FLAT_FEE : ETH_FLAT_FEE;
+    const flatFee = isErc20 ? ERC20_FLAT_FEE : ETH_FLAT_FEE;
     const fee = flatFee.add(withdrawAmount.mul(feeRate).div(10000));
 
-    if (isUsdc) {
-        logger.debug(`Input UTXOs: ${inputs.length} (total: ${ethers.utils.formatUnits(inputSum, 6)} USDC)`);
-        logger.debug(`Fee: ${ethers.utils.formatUnits(fee, 6)} USDC (${rentFeeUsdc} USDC + ${feeRate / 100}%)`);
-        logger.debug(`Amount to arrive at recipient: ${ethers.utils.formatUnits(withdrawAmount.sub(fee), 6)} USDC`);
+    if (isErc20) {
+        logger.debug(`Input UTXOs: ${inputs.length} (total: ${ethers.utils.formatUnits(inputSum, tokenDecimals)} ${tokenSymbol})`);
+        logger.debug(`Fee: ${ethers.utils.formatUnits(fee, tokenDecimals)} ${tokenSymbol} (${rentFeeUsdc} ${tokenSymbol} + ${feeRate / 100}%)`);
+        logger.debug(`Amount to arrive at recipient: ${ethers.utils.formatUnits(withdrawAmount.sub(fee), tokenDecimals)} ${tokenSymbol}`);
     } else {
         logger.debug(`Input UTXOs: ${inputs.length} (total: ${ethers.utils.formatEther(inputSum)} ETH)`);
         logger.debug(`Fee: ${ethers.utils.formatEther(fee)} ETH (${rentFeeEth} + ${feeRate / 100}%)`);
@@ -101,8 +104,8 @@ export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, si
     }
 
     if (inputSum.lt(withdrawAmount)) {
-        const have = isUsdc ? ethers.utils.formatUnits(inputSum, 6) : ethers.utils.formatEther(inputSum);
-        const need = isUsdc ? ethers.utils.formatUnits(withdrawAmount, 6) : ethers.utils.formatEther(withdrawAmount);
+        const have = isErc20 ? ethers.utils.formatUnits(inputSum, tokenDecimals) : ethers.utils.formatEther(inputSum);
+        const need = isErc20 ? ethers.utils.formatUnits(withdrawAmount, tokenDecimals) : ethers.utils.formatEther(withdrawAmount);
         throw new Error(`Insufficient balance. Have ${have}, need ${need} (${withdrawAmountInput}).`);
     }
 
@@ -110,11 +113,11 @@ export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, si
     const outputs: Utxo[] = [];
 
     if (changeAmount.gt(0)) {
-        // Change UTXOs for USDC must carry the same mintAddress
-        const mintAddress = isUsdc ? BigNumber.from(net.usdcTokenAddress) : BigNumber.from(0);
+        // Change UTXOs for ERC20 pools must carry the same mintAddress.
+        const mintAddress = erc20Token ? BigNumber.from(erc20Token.tokenAddress) : BigNumber.from(0);
         outputs.push(new Utxo({ amount: changeAmount, keypair, mintAddress }));
-        const formattedChange = isUsdc
-            ? `${ethers.utils.formatUnits(changeAmount, 6)} USDC`
+        const formattedChange = isErc20
+            ? `${ethers.utils.formatUnits(changeAmount, tokenDecimals)} ${tokenSymbol}`
             : `${ethers.utils.formatEther(changeAmount)} ETH`;
         logger.debug(`Change UTXO: ${formattedChange}`);
     }
@@ -150,8 +153,8 @@ export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, si
     }
 
     if (changeAmount.gt(0)) {
-        const formattedChange = isUsdc
-            ? `${ethers.utils.formatUnits(changeAmount, 6)} USDC`
+        const formattedChange = isErc20
+            ? `${ethers.utils.formatUnits(changeAmount, tokenDecimals)} ${tokenSymbol}`
             : `${ethers.utils.formatEther(changeAmount)} ETH`;
         logger.debug(`\nChange UTXO created (${formattedChange})`);
     }

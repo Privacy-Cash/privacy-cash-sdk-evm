@@ -12,5 +12,4 @@ export {
     BASE_NETWORK,
     ETH_NETWORK, getDefaultNetworkConfig, getNetworkConfig, NETWORKS, resolveNetwork
 } from './utils/networkConfig.js'
-export type { NetworkConfig } from './utils/networkConfig.js'
-
+export type { Erc20Token, NetworkConfig, PrivacyToken } from './utils/networkConfig.js'

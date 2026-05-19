@@ -3,7 +3,7 @@ import { BigNumber, ethers } from 'ethers';
 import { poseidon1, poseidon2, poseidon3, poseidon4 } from 'poseidon-lite';
 import { UniversalStorage } from './db.js';
 import { logger } from './logger.js';
-import { NetworkConfig, resolveNetwork } from './networkConfig.js';
+import { NetworkConfig, PrivacyToken, getErc20TokenConfig, resolveNetwork } from './networkConfig.js';
 import { prove } from './prover.js';
 import { Utxo } from './utxo.js';
 
@@ -12,10 +12,11 @@ const storageCache = new Map<string, UniversalStorage>();
 /**
  * Returns the local UTXO cache store for the given chain+token combination.
  * Base keeps legacy store names ('evmProd', 'evmUsdcProd') to preserve existing caches.
- * Ethereum and future chains use prefixed names ('eth_evmProd', 'eth_evmUsdcProd').
+ * Ethereum and future chains use prefixed names ('eth_evmProd', 'eth_evmUsdtProd').
  */
-function getStorage(token: 'eth' | 'usdc', net: NetworkConfig): UniversalStorage {
-    const baseName = token === 'usdc' ? 'evmUsdcProd' : 'evmProd';
+function getStorage(token: PrivacyToken, net: NetworkConfig): UniversalStorage {
+    getErc20TokenConfig(net, token);
+    const baseName = token === 'eth' ? 'evmProd' : token === 'usdc' ? 'evmUsdcProd' : 'evmUsdtProd';
     const storeName = net.chainId === 8453 ? baseName : `${net.cachePrefix}_${baseName}`;
     const key = `PrivacyCashDB_${storeName}`;
     if (!storageCache.has(key)) {
@@ -123,7 +124,7 @@ export async function getProof({
     feeRecipient: string;
     encryptionKey: Buffer;
     keyBasePath: string;
-    token?: 'eth' | 'usdc';
+    token?: PrivacyToken;
     network?: NetworkConfig | number;
 }) {
     const net = resolveNetwork(network);
@@ -228,7 +229,7 @@ export async function prepareTransaction({
     feeRecipient?: string;
     encryptionKey: Buffer;
     keyBasePath: string;
-    token?: 'eth' | 'usdc';
+    token?: PrivacyToken;
     network?: NetworkConfig | number;
 }) {
     if (inputs.length > 2 || outputs.length > 2) {
@@ -278,7 +279,7 @@ export async function findUnspentUtxos({
     encryptionKey: Buffer;
     keypair: any;
     start?: number;
-    token?: 'eth' | 'usdc';
+    token?: PrivacyToken;
     network?: NetworkConfig | number;
 }) {
     const net = resolveNetwork(network);
@@ -373,7 +374,7 @@ export async function findUnspentUtxos({
     return unspent
 }
 
-export async function clearCache(address: string, token: 'eth' | 'usdc' = 'eth', network?: NetworkConfig | number): Promise<void> {
+export async function clearCache(address: string, token: PrivacyToken = 'eth', network?: NetworkConfig | number): Promise<void> {
     const net = resolveNetwork(network);
     const storage = getStorage(token, net);
     await storage.init();

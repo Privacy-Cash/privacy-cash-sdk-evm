@@ -3,14 +3,14 @@ import ERCPoolAbi from './utils/ERCPool.abi.json' with { type: 'json' };
 import EtherPoolAbi from './utils/EtherPool.abi.json' with { type: 'json' };
 import { deriveKeys } from './utils/encryption.js';
 import { logger } from './utils/logger.js';
-import { NetworkConfig, resolveNetwork } from './utils/networkConfig.js';
+import { NetworkConfig, PrivacyToken, getErc20TokenConfig, resolveNetwork } from './utils/networkConfig.js';
 import { findUnspentUtxos, toFixedHex } from './utils/utils.js';
 
 export async function getBalance({ signature, address, offset, token = 'eth', network }: {
     signature: string,
     address: string,
     offset?: number,
-    token?: 'eth' | 'usdc',
+    token?: PrivacyToken,
     network?: NetworkConfig | number,
 }) {
     const net = resolveNetwork(network);
@@ -19,9 +19,12 @@ export async function getBalance({ signature, address, offset, token = 'eth', ne
         chainId: net.chainId,
     });
 
-    const isUsdc = token === 'usdc';
-    const contractAddress = ethers.utils.getAddress(isUsdc ? net.usdcPoolAddress : net.etherPoolAddress);
-    const abi = isUsdc ? ERCPoolAbi : EtherPoolAbi;
+    const erc20Token = getErc20TokenConfig(net, token);
+    const isErc20 = erc20Token !== null;
+    const tokenSymbol = erc20Token?.symbol ?? 'ETH';
+    const tokenDecimals = erc20Token?.decimals ?? 18;
+    const contractAddress = ethers.utils.getAddress(erc20Token ? erc20Token.poolAddress : net.etherPoolAddress);
+    const abi = isErc20 ? ERCPoolAbi : EtherPoolAbi;
 
     logger.debug(`Address: ${address}`);
 
@@ -31,7 +34,7 @@ export async function getBalance({ signature, address, offset, token = 'eth', ne
 
     const pool = new ethers.Contract(contractAddress, abi, readProvider);
 
-    if (!isUsdc) {
+    if (!isErc20) {
         const poolBalance = await readProvider.getBalance(pool.address);
         logger.debug(`EtherPool: ${pool.address}`);
         logger.debug(`Pool on-chain balance: ${ethers.utils.formatEther(poolBalance)} ETH`);
@@ -53,18 +56,18 @@ export async function getBalance({ signature, address, offset, token = 'eth', ne
     let total = BigNumber.from(0);
     for (let i = 0; i < unspent.length; i++) {
         const utxo = unspent[i];
-        const formatted = isUsdc
-            ? ethers.utils.formatUnits(utxo.amount, 6)
+        const formatted = isErc20
+            ? ethers.utils.formatUnits(utxo.amount, tokenDecimals)
             : ethers.utils.formatEther(utxo.amount);
-        logger.debug(`  #${i}: ${formatted} ${isUsdc ? 'USDC' : 'ETH'} (index: ${utxo.index})`);
+        logger.debug(`  #${i}: ${formatted} ${tokenSymbol} (index: ${utxo.index})`);
         total = total.add(utxo.amount);
     }
 
-    const balance = isUsdc
-        ? ethers.utils.formatUnits(total, 6)
+    const balance = isErc20
+        ? ethers.utils.formatUnits(total, tokenDecimals)
         : ethers.utils.formatEther(total);
 
-    logger.debug(`\nTotal unspent: ${balance} ${isUsdc ? 'USDC' : 'ETH'}`);
+    logger.debug(`\nTotal unspent: ${balance} ${tokenSymbol}`);
 
     return { balance };
 }
