@@ -1,6 +1,12 @@
 export type Erc20Token = 'usdc' | 'usdt';
 export type PrivacyToken = 'eth' | Erc20Token;
 
+const EVM_INDEXER_URL = process.env.NEXT_PUBLIC_EVM_INDEXER_URL || process.env.EVM_INDEXER_URL || 'https://evm.privacycash.org';
+
+function getIndexerRpcUrl(chain: 'base' | 'eth') {
+    return `${EVM_INDEXER_URL.replace(/\/$/, '')}/rpc/${chain}`;
+}
+
 export interface NetworkConfig {
     chainId: number;
     /** Short identifier used in API calls and DB table prefixes: 'base' | 'eth' */
@@ -24,8 +30,8 @@ export interface NetworkConfig {
 export const BASE_NETWORK: NetworkConfig = {
     chainId: 8453,
     chainKey: 'base',
-    rpcUrl: process.env.NEXT_PUBLIC_BASE_RPC || 'https://mainnet.base.org',
-    indexerUrl: process.env.NEXT_PUBLIC_EVM_INDEXER_URL || 'https://evm.privacycash.org',
+    rpcUrl: process.env.NEXT_PUBLIC_BASE_RPC || process.env.BASE_RPC || getIndexerRpcUrl('base'),
+    indexerUrl: EVM_INDEXER_URL,
     etherPoolAddress: '0x7F673790C08Ddf27c0Aa6fa9526CCC8dAaB081Ec',
     usdcPoolAddress: '0xe91dd4AB03909f5CEb87f42B4308B222995a905b',
     usdcTokenAddress: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
@@ -41,8 +47,8 @@ export const BASE_NETWORK: NetworkConfig = {
 export const ETH_NETWORK: NetworkConfig = {
     chainId: 1,
     chainKey: 'eth',
-    rpcUrl: process.env.NEXT_PUBLIC_ETH_RPC || 'https://eth.drpc.org',
-    indexerUrl: process.env.NEXT_PUBLIC_EVM_INDEXER_URL || 'https://evm.privacycash.org',
+    rpcUrl: process.env.NEXT_PUBLIC_ETH_RPC || process.env.ETH_RPC || getIndexerRpcUrl('eth'),
+    indexerUrl: EVM_INDEXER_URL,
     etherPoolAddress: process.env.NEXT_PUBLIC_ETH_ETHER_POOL_ADDRESS || '0x77A10AE3E513c2D73D73eb52212c6918C8830dd0',
     usdcPoolAddress: '',
     usdcTokenAddress: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',

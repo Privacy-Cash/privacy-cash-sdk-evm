@@ -1,11 +1,11 @@
 import { logger } from './logger.js';
-import { NetworkConfig, resolveNetwork } from './networkConfig.js';
+import { NetworkConfig, PrivacyToken, resolveNetwork } from './networkConfig.js';
 
 export interface RemoteConfig {
     prices: { eth: number };
-    minimum_withdrawal: { eth: number; usdc: number };
-    minimum_deposit: { eth: number; usdc: number };
-    rent_fees: { eth: number; usdc: number };
+    minimum_withdrawal: Record<PrivacyToken, number>;
+    minimum_deposit: Record<PrivacyToken, number>;
+    rent_fees: Record<PrivacyToken, number>;
     fee_rate: number;
 }
 
@@ -24,7 +24,10 @@ export async function getRemoteConfig(network?: NetworkConfig | number): Promise
         throw new Error(`No indexer URL configured for chain ${net.chainId} (${net.chainKey})`);
     }
 
-    const res = await fetch(`${net.indexerUrl}/config`);
+    const configUrl = new URL(`${net.indexerUrl.replace(/\/$/, '')}/config`);
+    configUrl.searchParams.set('chain', net.chainKey);
+
+    const res = await fetch(configUrl.toString());
     if (!res.ok) {
         throw new Error(`Failed to fetch remote config: HTTP ${res.status}`);
     }

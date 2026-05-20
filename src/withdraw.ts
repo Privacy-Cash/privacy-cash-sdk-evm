@@ -28,22 +28,17 @@ export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, si
     const tokenDecimals = erc20Token?.decimals ?? 18;
 
     const remoteConfig = await getRemoteConfig(net);
-    const minWithdrawalEth = remoteConfig.minimum_withdrawal.eth;
-    const minWithdrawalUsdc = remoteConfig.minimum_withdrawal.usdc;
-    const rentFeeEth = remoteConfig.rent_fees.eth;
-    const rentFeeUsdc = remoteConfig.rent_fees.usdc;
+    const minWithdrawal = remoteConfig.minimum_withdrawal[token];
+    const rentFee = remoteConfig.rent_fees[token];
     const feeRate = remoteConfig.fee_rate;
 
-    const ETH_FLAT_FEE = ethers.utils.parseEther(rentFeeEth.toFixed(18));
-    const ERC20_FLAT_FEE = ethers.utils.parseUnits(rentFeeUsdc.toFixed(tokenDecimals), tokenDecimals);
-
     if (isErc20) {
-        if (withdrawAmountInput < minWithdrawalUsdc) {
-            throw new Error(`Withdrawal amount must be at least ${minWithdrawalUsdc} ${tokenSymbol}`);
+        if (withdrawAmountInput < minWithdrawal) {
+            throw new Error(`Withdrawal amount must be at least ${minWithdrawal} ${tokenSymbol}`);
         }
     } else {
-        if (withdrawAmountInput < minWithdrawalEth) {
-            throw new Error(`Withdrawal amount must be at least ${minWithdrawalEth} ETH`);
+        if (withdrawAmountInput < minWithdrawal) {
+            throw new Error(`Withdrawal amount must be at least ${minWithdrawal} ETH`);
         }
     }
 
@@ -90,16 +85,18 @@ export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, si
     }
 
     const inputSum = inputs.reduce((sum, u) => sum.add(u.amount), BigNumber.from(0));
-    const flatFee = isErc20 ? ERC20_FLAT_FEE : ETH_FLAT_FEE;
+    const flatFee = isErc20
+        ? ethers.utils.parseUnits(rentFee.toFixed(tokenDecimals), tokenDecimals)
+        : ethers.utils.parseEther(rentFee.toFixed(18));
     const fee = flatFee.add(withdrawAmount.mul(feeRate).div(10000));
 
     if (isErc20) {
         logger.debug(`Input UTXOs: ${inputs.length} (total: ${ethers.utils.formatUnits(inputSum, tokenDecimals)} ${tokenSymbol})`);
-        logger.debug(`Fee: ${ethers.utils.formatUnits(fee, tokenDecimals)} ${tokenSymbol} (${rentFeeUsdc} ${tokenSymbol} + ${feeRate / 100}%)`);
+        logger.debug(`Fee: ${ethers.utils.formatUnits(fee, tokenDecimals)} ${tokenSymbol} (${rentFee} ${tokenSymbol} + ${feeRate / 100}%)`);
         logger.debug(`Amount to arrive at recipient: ${ethers.utils.formatUnits(withdrawAmount.sub(fee), tokenDecimals)} ${tokenSymbol}`);
     } else {
         logger.debug(`Input UTXOs: ${inputs.length} (total: ${ethers.utils.formatEther(inputSum)} ETH)`);
-        logger.debug(`Fee: ${ethers.utils.formatEther(fee)} ETH (${rentFeeEth} + ${feeRate / 100}%)`);
+        logger.debug(`Fee: ${ethers.utils.formatEther(fee)} ETH (${rentFee} + ${feeRate / 100}%)`);
         logger.debug(`Amount to arrive at recipient: ${ethers.utils.formatEther(withdrawAmount.sub(fee))} ETH`);
     }
 

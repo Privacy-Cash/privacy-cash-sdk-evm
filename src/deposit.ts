@@ -108,16 +108,15 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
     const tokenDecimals = erc20Token?.decimals ?? 18;
 
     const remoteConfig = await getRemoteConfig(net);
-    const minDepositEth = remoteConfig.minimum_deposit.eth;
-    const minDepositUsdc = remoteConfig.minimum_deposit.usdc;
+    const minDeposit = remoteConfig.minimum_deposit[token];
 
     if (isErc20) {
-        if (depositAmountInput < minDepositUsdc) {
-            throw new Error(`Deposit amount must be at least ${minDepositUsdc} ${tokenSymbol}`);
+        if (depositAmountInput < minDeposit) {
+            throw new Error(`Deposit amount must be at least ${minDeposit} ${tokenSymbol}`);
         }
     } else {
-        if (depositAmountInput < minDepositEth) {
-            throw new Error(`Deposit amount must be at least ${minDepositEth} ETH`);
+        if (depositAmountInput < minDeposit) {
+            throw new Error(`Deposit amount must be at least ${minDeposit} ETH`);
         }
     }
 
