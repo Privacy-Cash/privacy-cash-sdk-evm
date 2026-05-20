@@ -1,6 +1,7 @@
 import { ethers } from 'ethers';
 import { BASE_NETWORK, deposit, getBalance, withdraw } from '../src/index.js';
 import { SIGN_PRIVACY_MESSAGE } from '../src/utils/constants.js';
+import { waitForTxConfirmation } from './waitForTx.js';
 
 if (!process.env.PRIVATE_KEY) {
     console.warn("Warning: PRIVATE_KEY is not set. Tests will fail.");
@@ -62,7 +63,7 @@ async function testSDK(testType: string, amountArg?: string) {
 
             const txSender = async (unsignedTx: any) => {
                 let tx = await signer.sendTransaction(unsignedTx);
-                await tx.wait();
+                await waitForTxConfirmation(provider, tx.hash, 'deposit');
                 return tx.hash;
             };
 

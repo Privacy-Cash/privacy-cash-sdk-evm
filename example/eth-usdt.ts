@@ -1,6 +1,7 @@
 import { ethers } from 'ethers';
 import { ETH_NETWORK, deposit, getBalance, withdraw } from '../src/index.js';
 import { SIGN_PRIVACY_MESSAGE } from '../src/utils/constants.js';
+import { waitForTxConfirmation } from './waitForTx.js';
 
 if (!process.env.PRIVATE_KEY) {
     console.warn("Warning: PRIVATE_KEY is not set. Tests will fail.");
@@ -19,7 +20,6 @@ const ERC20_ABI = [
 
 const TOKEN = 'usdt' as const;
 const TOKEN_SYMBOL = 'USDT';
-const WAIT_TIMEOUT_MS = 5 * 60 * 1000;
 
 function parseRequiredAmount(amountArg: string | undefined, testType: 'deposit' | 'withdraw') {
     if (!amountArg) {
@@ -77,13 +77,7 @@ async function testSDK(testType: string, amountArg?: string) {
                 console.log(`[${stage}] tx hash: ${tx.hash}`);
                 console.log(`[${stage}] waiting for confirmation...`);
 
-                await Promise.race([
-                    tx.wait(),
-                    new Promise((_, reject) => setTimeout(
-                        () => reject(new Error(`[${stage}] timed out waiting for confirmation. Tx may still be pending: ${tx.hash}`)),
-                        WAIT_TIMEOUT_MS,
-                    )),
-                ]);
+                await waitForTxConfirmation(provider, tx.hash, stage);
                 console.log(`[${stage}] confirmed`);
                 return tx.hash;
             };

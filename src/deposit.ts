@@ -18,6 +18,16 @@ function bumpFee(value: BigNumber, percent = getFeeBumpPercent()): BigNumber {
     return value.mul(percent).div(100);
 }
 
+function getGasLimitBumpPercent(): number {
+    const value = Number(process.env.NEXT_PUBLIC_EVM_GAS_LIMIT_BUMP_PERCENT || process.env.EVM_GAS_LIMIT_BUMP_PERCENT);
+    if (Number.isFinite(value) && value >= 100) return Math.floor(value);
+    return 120;
+}
+
+function bumpGasLimit(value: BigNumber, percent = getGasLimitBumpPercent()): BigNumber {
+    return value.mul(percent).add(99).div(100);
+}
+
 function getMinPriorityFee(net: NetworkConfig): BigNumber | null {
     const configured = process.env.NEXT_PUBLIC_ETH_MIN_PRIORITY_FEE_GWEI || process.env.ETH_MIN_PRIORITY_FEE_GWEI;
     const gwei = configured || (net.chainKey === 'eth' ? '2' : '');
@@ -52,6 +62,30 @@ function getFeeOverrides(net: NetworkConfig, feeData: ethers.providers.FeeData):
     }
 
     throw new Error('Failed to fetch network fee data');
+}
+
+async function estimateTransactGasLimit({
+    pool,
+    args,
+    extData,
+    estimateOverrides,
+    fallback,
+}: {
+    pool: ethers.Contract,
+    args: any,
+    extData: any,
+    estimateOverrides: ethers.providers.TransactionRequest,
+    fallback: BigNumber,
+}): Promise<BigNumber> {
+    try {
+        const estimated = await pool.estimateGas.transact(args, extData, estimateOverrides);
+        const gasLimit = bumpGasLimit(estimated);
+        logger.debug(`Estimated transact gas: ${estimated.toString()} (using limit ${gasLimit.toString()})`);
+        return gasLimit;
+    } catch (err) {
+        logger.warn(`Failed to estimate transact gas; using fallback ${fallback.toString()}. Error:`, err);
+        return fallback;
+    }
 }
 
 export async function deposit({ depositAmountInput, keyBasePath, signature, address, txSender, token = 'eth', network }: {
@@ -224,7 +258,14 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
         });
 
         // Step 3: send transact tx (no ETH value for ERC pool)
-        const partialTx = await pool.populateTransaction.transact(args, extData, { gasLimit: 2000000 });
+        const gasLimit = await estimateTransactGasLimit({
+            pool,
+            args,
+            extData,
+            estimateOverrides: { from: address },
+            fallback: BigNumber.from(2000000),
+        });
+        const partialTx = await pool.populateTransaction.transact(args, extData, { gasLimit });
         const [network2, feeData2] = await Promise.all([
             readProvider.getNetwork(),
             readProvider.getFeeData(),
@@ -250,9 +291,19 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
             token,
             network: net,
         });
+        const gasLimit = await estimateTransactGasLimit({
+            pool,
+            args,
+            extData,
+            estimateOverrides: {
+                from: address,
+                value: depositAmount,
+            },
+            fallback: BigNumber.from(3000000),
+        });
         const partialTx = await pool.populateTransaction.transact(args, extData, {
             value: depositAmount,
-            gasLimit: 3000000,
+            gasLimit,
         });
         const [network, nonce, feeData] = await Promise.all([
             readProvider.getNetwork(),
