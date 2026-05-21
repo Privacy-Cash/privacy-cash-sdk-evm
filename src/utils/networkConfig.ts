@@ -39,7 +39,7 @@ export const BASE_NETWORK: NetworkConfig = {
     usdtPoolAddress: '',
     usdtTokenAddress: '',
     usdtDecimals: 6,
-    feeRecipientAddress: '0x9f1d0c72a50088172220990474f97A63854949CF',
+    feeRecipientAddress: '0x8D772A68f2327409a7bb3F96f549297AEdf9312B',
     cachePrefix: 'base',
     blockTimeMs: 2000,
 };
@@ -56,7 +56,7 @@ export const ETH_NETWORK: NetworkConfig = {
     usdtPoolAddress: process.env.NEXT_PUBLIC_ETH_USDT_POOL_ADDRESS || '0xC88F4dF2B6EdDd6B6Bdf95A0177f50C90Fa7527f',
     usdtTokenAddress: process.env.NEXT_PUBLIC_ETH_USDT_TOKEN_ADDRESS || '0xdAC17F958D2ee523a2206206994597C13D831ec7',
     usdtDecimals: 6,
-    feeRecipientAddress: process.env.NEXT_PUBLIC_ETH_FEE_RECIPIENT_ADDRESS || '0x9f1d0c72a50088172220990474f97A63854949CF',
+    feeRecipientAddress: process.env.NEXT_PUBLIC_ETH_FEE_RECIPIENT_ADDRESS || '0x8D772A68f2327409a7bb3F96f549297AEdf9312B',
     cachePrefix: 'eth',
     blockTimeMs: 12000,
 };

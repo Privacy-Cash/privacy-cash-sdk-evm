@@ -1,3 +1,4 @@
+
 import { BASE_NETWORK } from './networkConfig.js';
 
 // Backward-compatible re-exports — all resolve to the Base network.
