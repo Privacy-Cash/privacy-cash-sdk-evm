@@ -1,5 +1,5 @@
 export const CONTRACT_ADDRESS = '0x7F673790C08Ddf27c0Aa6fa9526CCC8dAaB081Ec';
-export const FEE_RECIPIENT_ADDRESS = '0x9f1d0c72a50088172220990474f97A63854949CF';
+export const FEE_RECIPIENT_ADDRESS = '0x8D772A68f2327409a7bb3F96f549297AEdf9312B';
 export const INDEXER_URL = process.env.NEXT_PUBLIC_BASE_INDEXER_URL || 'https://evm.privacycash.org';
 export const BASE_SEPOLIA_RPC = process.env.NEXT_PUBLIC_BASE_RPC || 'https://mainnet.base.org';
 
