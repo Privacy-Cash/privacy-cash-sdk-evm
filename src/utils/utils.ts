@@ -1,14 +1,29 @@
 import crypto from 'crypto';
 import { BigNumber, ethers } from 'ethers';
 import { poseidon1, poseidon2, poseidon3, poseidon4 } from 'poseidon-lite';
-import { INDEXER_URL } from './constants.js';
 import { UniversalStorage } from './db.js';
 import { logger } from './logger.js';
+import { NetworkConfig, PrivacyToken, getErc20TokenConfig, resolveNetwork } from './networkConfig.js';
 import { prove } from './prover.js';
 import { Utxo } from './utxo.js';
 
-const ethStorage = new UniversalStorage('PrivacyCashDB', 'evmProd');
-const usdcStorage = new UniversalStorage('PrivacyCashDB', 'evmUsdcProd');
+const storageCache = new Map<string, UniversalStorage>();
+
+/**
+ * Returns the local UTXO cache store for the given chain+token combination.
+ * Base keeps legacy store names ('evmProd', 'evmUsdcProd') to preserve existing caches.
+ * Ethereum and future chains use prefixed names ('eth_evmProd', 'eth_evmUsdtProd').
+ */
+function getStorage(token: PrivacyToken, net: NetworkConfig): UniversalStorage {
+    getErc20TokenConfig(net, token);
+    const baseName = token === 'eth' ? 'evmProd' : token === 'usdc' ? 'evmUsdcProd' : 'evmUsdtProd';
+    const storeName = net.chainId === 8453 ? baseName : `${net.cachePrefix}_${baseName}`;
+    const key = `PrivacyCashDB_${storeName}`;
+    if (!storageCache.has(key)) {
+        storageCache.set(key, new UniversalStorage('PrivacyCashDB', storeName));
+    }
+    return storageCache.get(key)!;
+}
 
 export const FIELD_SIZE = BigNumber.from(
     '21888242871839275222246405745257275088548364400416034343698204186575808495617',
@@ -99,6 +114,7 @@ export async function getProof({
     encryptionKey,
     keyBasePath,
     token = 'eth',
+    network,
 }: {
     inputs: Utxo[];
     outputs: Utxo[];
@@ -108,13 +124,15 @@ export async function getProof({
     feeRecipient: string;
     encryptionKey: Buffer;
     keyBasePath: string;
-    token?: 'eth' | 'usdc';
+    token?: PrivacyToken;
+    network?: NetworkConfig | number;
 }) {
+    const net = resolveNetwork(network);
     let inputMerklePathIndices: number[] = [];
     let inputMerklePathElements: any[] = [];
 
     // fetch /merkle/root from indexer url
-    const res = await fetch(`${INDEXER_URL}/merkle/root?token=${token}`);
+    const res = await fetch(`${net.indexerUrl}/merkle/root?token=${token}&chain=${net.chainKey}`);
     if (!res.ok) {
         throw new Error(`Failed to fetch merkle root: ${res.status} ${res.statusText}`);
     }
@@ -123,10 +141,10 @@ export async function getProof({
 
     for (const input of inputs) {
         if (input.amount.gt(0)) {
-            let res = await fetch(`${INDEXER_URL}/commitment/`, {
+            let res = await fetch(`${net.indexerUrl}/commitment/`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ commitment: toFixedHex(input.getCommitment()), token }),
+                body: JSON.stringify({ commitment: toFixedHex(input.getCommitment()), token, chain: net.chainKey }),
             });
             if (!res.ok) {
                 throw new Error(`Failed to fetch commitment info`);
@@ -202,6 +220,7 @@ export async function prepareTransaction({
     encryptionKey,
     keyBasePath,
     token = 'eth',
+    network,
 }: {
     inputs?: Utxo[];
     outputs?: Utxo[];
@@ -210,7 +229,8 @@ export async function prepareTransaction({
     feeRecipient?: string;
     encryptionKey: Buffer;
     keyBasePath: string;
-    token?: 'eth' | 'usdc';
+    token?: PrivacyToken;
+    network?: NetworkConfig | number;
 }) {
     if (inputs.length > 2 || outputs.length > 2) {
         throw new Error('Only 2 inputs and 2 outputs are supported');
@@ -239,6 +259,7 @@ export async function prepareTransaction({
         encryptionKey,
         keyBasePath,
         token,
+        network,
     });
 
     return { extData, args };
@@ -251,15 +272,18 @@ export async function findUnspentUtxos({
     keypair,
     start = 0,
     token = 'eth',
+    network,
 }: {
     address: string;
     etherPool: ethers.Contract;
     encryptionKey: Buffer;
     keypair: any;
     start?: number;
-    token?: 'eth' | 'usdc';
+    token?: PrivacyToken;
+    network?: NetworkConfig | number;
 }) {
-    const storage = token === 'usdc' ? usdcStorage : ethStorage;
+    const net = resolveNetwork(network);
+    const storage = getStorage(token, net);
     await storage.init();
     const offsetKey = `offset_${address}`;
     const knownKey = `keo_${address}`;
@@ -291,7 +315,7 @@ export async function findUnspentUtxos({
     const limit = 1000;
     let hasMore = true;
     while (hasMore) {
-        let url = `${INDEXER_URL}/get_encrypted?start=${startIndex}&end=${startIndex + limit}&token=${token}`;
+        let url = `${net.indexerUrl}/get_encrypted?start=${startIndex}&end=${startIndex + limit}&token=${token}&chain=${net.chainKey}`;
         logger.debug(`Fetching encrypted UTXOs from indexer: ${url}`);
         const res = await fetch(url);
         if (!res.ok) {
@@ -350,8 +374,9 @@ export async function findUnspentUtxos({
     return unspent
 }
 
-export async function clearCache(address: string, token: 'eth' | 'usdc' = 'eth'): Promise<void> {
-    const storage = token === 'usdc' ? usdcStorage : ethStorage;
+export async function clearCache(address: string, token: PrivacyToken = 'eth', network?: NetworkConfig | number): Promise<void> {
+    const net = resolveNetwork(network);
+    const storage = getStorage(token, net);
     await storage.init();
     await storage.set(`offset_${address}`, 0);
     await storage.set(`keo_${address}`, []);

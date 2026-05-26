@@ -1,6 +1,7 @@
 import { ethers } from 'ethers';
-import { deposit, getBalance, withdraw } from '../src/index.js';
-import { SIGN_PRIVACY_MESSAGE, USDC_CONTRACT_ADDRESS } from '../src/utils/constants.js';
+import { BASE_NETWORK, deposit, getBalance, withdraw } from '../src/index.js';
+import { SIGN_PRIVACY_MESSAGE } from '../src/utils/constants.js';
+import { waitForTxConfirmation } from './waitForTx.js';
 
 if (!process.env.PRIVATE_KEY) {
     console.warn("Warning: PRIVATE_KEY is not set. Tests will fail.");
@@ -8,8 +9,7 @@ if (!process.env.PRIVATE_KEY) {
 }
 
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
-
-const RPC_URL = 'https://mainnet.base.org';
+const network = BASE_NETWORK;
 
 // Minimal ERC20 ABI for approve
 const ERC20_ABI = [
@@ -35,9 +35,9 @@ function parseRequiredAmount(amountArg: string | undefined, testType: 'deposit' 
 async function testSDK(testType: string, amountArg?: string) {
     console.log('--- SDK USDC Testing Started ---');
 
-    const provider = new ethers.providers.JsonRpcProvider(RPC_URL, {
-        name: 'base',
-        chainId: 8453,
+    const provider = new ethers.providers.JsonRpcProvider(network.rpcUrl, {
+        name: network.chainKey,
+        chainId: network.chainId,
     });
     const signer = new ethers.Wallet(PRIVATE_KEY, provider);
     const address = await signer.getAddress();
@@ -48,12 +48,12 @@ async function testSDK(testType: string, amountArg?: string) {
 
     try {
         if (testType === 'balance') {
-            const usdc = new ethers.Contract(USDC_CONTRACT_ADDRESS, ERC20_ABI, provider);
+            const usdc = new ethers.Contract(network.usdcTokenAddress, ERC20_ABI, provider);
             const raw = await usdc.balanceOf(address);
             console.log(`Wallet USDC balance: ${ethers.utils.formatUnits(raw, 6)} USDC`);
 
             console.log('\n Checking shielded balance...');
-            const res = await getBalance({ signature, address, token: 'usdc' });
+            const res = await getBalance({ signature, address, token: 'usdc', network });
             console.log(`Shielded balance: ${res.balance} USDC`);
         }
 
@@ -63,7 +63,7 @@ async function testSDK(testType: string, amountArg?: string) {
 
             const txSender = async (unsignedTx: any) => {
                 let tx = await signer.sendTransaction(unsignedTx);
-                await tx.wait();
+                await waitForTxConfirmation(provider, tx.hash, 'deposit');
                 return tx.hash;
             };
 
@@ -74,6 +74,7 @@ async function testSDK(testType: string, amountArg?: string) {
                 signature,
                 address,
                 token: 'usdc',
+                network,
             });
             console.log(`Deposit transaction sent! TX`, tx);
         }
@@ -89,6 +90,7 @@ async function testSDK(testType: string, amountArg?: string) {
                 signature,
                 address,
                 token: 'usdc',
+                network,
             });
             console.log(`Withdrawal successful! TX: ${withdrawResult}`);
         }
@@ -96,7 +98,7 @@ async function testSDK(testType: string, amountArg?: string) {
         else if (testType === 'clear') {
             console.log('\n Clearing USDC Cache...');
             const { clearCache } = await import('../src/utils/utils.js');
-            await clearCache(address, 'usdc');
+            await clearCache(address, 'usdc', network);
             console.log('Cache cleared successfully!');
         }
 
