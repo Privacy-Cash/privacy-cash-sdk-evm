@@ -10,13 +10,13 @@ import { findUnspentUtxos, prepareTransaction, toFixedHex } from './utils/utils.
 import { Utxo } from './utils/utxo.js';
 
 const DYNAMIC_RENT_FEE_PERCENT = 110;
-const RENT_BASE_FEE_BUMP_PERCENT = 120;
+const RENT_BASE_FEE_BUMP_PERCENT = 110;
 const WITHDRAW_GAS_LIMIT_FALLBACK = BigNumber.from(1600000);
 
 function getFeeBumpPercent(): number {
     const value = Number(process.env.NEXT_PUBLIC_EVM_FEE_BUMP_PERCENT || process.env.EVM_FEE_BUMP_PERCENT);
     if (Number.isFinite(value) && value >= 100) return Math.floor(value);
-    return 120;
+    return 110;
 }
 
 function bumpFee(value: BigNumber, percent = getFeeBumpPercent()): BigNumber {
@@ -25,7 +25,7 @@ function bumpFee(value: BigNumber, percent = getFeeBumpPercent()): BigNumber {
 
 function getMinPriorityFee(net: NetworkConfig): BigNumber | null {
     const configured = process.env.NEXT_PUBLIC_ETH_MIN_PRIORITY_FEE_GWEI || process.env.ETH_MIN_PRIORITY_FEE_GWEI;
-    const gwei = configured || (net.chainKey === 'eth' ? '1' : '');
+    const gwei = configured || (net.chainKey === 'eth' ? '0.7' : '');
     return gwei ? ethers.utils.parseUnits(gwei, 'gwei') : null;
 }
 
