@@ -10,12 +10,13 @@ import { findUnspentUtxos, prepareTransaction, toFixedHex } from './utils/utils.
 import { Utxo } from './utils/utxo.js';
 
 const DYNAMIC_RENT_FEE_PERCENT = 110;
+const RENT_BASE_FEE_BUMP_PERCENT = 120;
 const WITHDRAW_GAS_LIMIT_FALLBACK = BigNumber.from(1600000);
 
 function getFeeBumpPercent(): number {
     const value = Number(process.env.NEXT_PUBLIC_EVM_FEE_BUMP_PERCENT || process.env.EVM_FEE_BUMP_PERCENT);
     if (Number.isFinite(value) && value >= 100) return Math.floor(value);
-    return 150;
+    return 120;
 }
 
 function bumpFee(value: BigNumber, percent = getFeeBumpPercent()): BigNumber {
@@ -24,7 +25,7 @@ function bumpFee(value: BigNumber, percent = getFeeBumpPercent()): BigNumber {
 
 function getMinPriorityFee(net: NetworkConfig): BigNumber | null {
     const configured = process.env.NEXT_PUBLIC_ETH_MIN_PRIORITY_FEE_GWEI || process.env.ETH_MIN_PRIORITY_FEE_GWEI;
-    const gwei = configured || (net.chainKey === 'eth' ? '2' : '');
+    const gwei = configured || (net.chainKey === 'eth' ? '1' : '');
     return gwei ? ethers.utils.parseUnits(gwei, 'gwei') : null;
 }
 
@@ -62,12 +63,34 @@ function ceilDiv(value: BigNumber, divisor: BigNumber): BigNumber {
     return value.add(divisor).sub(1).div(divisor);
 }
 
-function getFeePriceForRent(feeOverrides: ethers.utils.Deferrable<ethers.providers.TransactionRequest>): BigNumber {
-    const gasPrice = feeOverrides.gasPrice;
-    if (gasPrice) return BigNumber.from(gasPrice);
+async function getRentFeeGasPrice(
+    net: NetworkConfig,
+    provider: ethers.providers.JsonRpcProvider,
+    feeData: ethers.providers.FeeData,
+): Promise<BigNumber> {
+    if (feeData.maxFeePerGas || feeData.maxPriorityFeePerGas) {
+        const minPriorityFee = getMinPriorityFee(net);
+        const priorityFee = [feeData.maxPriorityFeePerGas, minPriorityFee]
+            .filter((value): value is BigNumber => Boolean(value))
+            .reduce((max, value) => value.gt(max) ? value : max, BigNumber.from(0));
+        if (priorityFee.isZero()) {
+            throw new Error('Failed to fetch network priority fee data');
+        }
 
-    const maxFeePerGas = feeOverrides.maxFeePerGas;
-    if (maxFeePerGas) return BigNumber.from(maxFeePerGas);
+        const latestBlock = feeData.lastBaseFeePerGas ? null : await provider.getBlock('latest');
+        const baseFee = feeData.lastBaseFeePerGas
+            ?? (latestBlock?.baseFeePerGas ?? null);
+        if (baseFee) {
+            return bumpFee(baseFee, RENT_BASE_FEE_BUMP_PERCENT).add(priorityFee);
+        }
+        if (feeData.maxFeePerGas) {
+            return BigNumber.from(feeData.maxFeePerGas);
+        }
+    }
+
+    if (feeData.gasPrice) {
+        return bumpFee(feeData.gasPrice);
+    }
 
     throw new Error('Failed to calculate gas fee for rent fee');
 }
@@ -126,8 +149,8 @@ async function estimateDynamicRentFee({
     remoteConfig: RemoteConfig;
     token: PrivacyToken;
 }): Promise<BigNumber> {
-    const feeOverrides = getFeeOverrides(net, await readProvider.getFeeData());
-    const gasPrice = getFeePriceForRent(feeOverrides);
+    const feeData = await readProvider.getFeeData();
+    const gasPrice = await getRentFeeGasPrice(net, readProvider, feeData);
 
     let gasLimit: BigNumber;
     try {

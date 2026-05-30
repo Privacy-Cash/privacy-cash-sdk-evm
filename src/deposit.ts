@@ -11,7 +11,7 @@ import { Utxo } from './utils/utxo.js';
 function getFeeBumpPercent(): number {
     const value = Number(process.env.NEXT_PUBLIC_EVM_FEE_BUMP_PERCENT || process.env.EVM_FEE_BUMP_PERCENT);
     if (Number.isFinite(value) && value >= 100) return Math.floor(value);
-    return 150;
+    return 120;
 }
 
 function bumpFee(value: BigNumber, percent = getFeeBumpPercent()): BigNumber {
@@ -30,7 +30,7 @@ function bumpGasLimit(value: BigNumber, percent = getGasLimitBumpPercent()): Big
 
 function getMinPriorityFee(net: NetworkConfig): BigNumber | null {
     const configured = process.env.NEXT_PUBLIC_ETH_MIN_PRIORITY_FEE_GWEI || process.env.ETH_MIN_PRIORITY_FEE_GWEI;
-    const gwei = configured || (net.chainKey === 'eth' ? '2' : '');
+    const gwei = configured || (net.chainKey === 'eth' ? '1' : '');
     return gwei ? ethers.utils.parseUnits(gwei, 'gwei') : null;
 }
 
