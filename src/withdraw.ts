@@ -9,8 +9,8 @@ import { getRemoteConfig } from './utils/remoteConfig.js';
 import { findUnspentUtxos, prepareTransaction, toFixedHex } from './utils/utils.js';
 import { Utxo } from './utils/utxo.js';
 
-const DYNAMIC_RENT_FEE_PERCENT = 110;
-const RENT_BASE_FEE_BUMP_PERCENT = 110;
+const DYNAMIC_RENT_FEE_PERCENT = 105;
+const RENT_BASE_FEE_BUMP_PERCENT = 105;
 const WITHDRAW_GAS_LIMIT_FALLBACK = BigNumber.from(1600000);
 
 function getFeeBumpPercent(): number {
@@ -25,7 +25,7 @@ function bumpFee(value: BigNumber, percent = getFeeBumpPercent()): BigNumber {
 
 function getMinPriorityFee(net: NetworkConfig): BigNumber | null {
     const configured = process.env.NEXT_PUBLIC_ETH_MIN_PRIORITY_FEE_GWEI || process.env.ETH_MIN_PRIORITY_FEE_GWEI;
-    const gwei = configured || (net.chainKey === 'eth' ? '0.7' : '');
+    const gwei = configured || (net.chainKey === 'eth' ? '0.6' : '');
     return gwei ? ethers.utils.parseUnits(gwei, 'gwei') : null;
 }
 

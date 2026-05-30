@@ -30,7 +30,7 @@ function bumpGasLimit(value: BigNumber, percent = getGasLimitBumpPercent()): Big
 
 function getMinPriorityFee(net: NetworkConfig): BigNumber | null {
     const configured = process.env.NEXT_PUBLIC_ETH_MIN_PRIORITY_FEE_GWEI || process.env.ETH_MIN_PRIORITY_FEE_GWEI;
-    const gwei = configured || (net.chainKey === 'eth' ? '0.7' : '');
+    const gwei = configured || (net.chainKey === 'eth' ? '0.6' : '');
     return gwei ? ethers.utils.parseUnits(gwei, 'gwei') : null;
 }
 
