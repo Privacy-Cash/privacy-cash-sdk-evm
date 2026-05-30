@@ -4,9 +4,187 @@ import EtherPoolAbi from './utils/EtherPool.abi.json' with { type: 'json' };
 import { deriveKeys } from './utils/encryption.js';
 import { logger } from './utils/logger.js';
 import { NetworkConfig, PrivacyToken, getErc20TokenConfig, resolveNetwork } from './utils/networkConfig.js';
+import type { RemoteConfig } from './utils/remoteConfig.js';
 import { getRemoteConfig } from './utils/remoteConfig.js';
 import { findUnspentUtxos, prepareTransaction, toFixedHex } from './utils/utils.js';
 import { Utxo } from './utils/utxo.js';
+
+const DYNAMIC_RENT_FEE_PERCENT = 110;
+const WITHDRAW_GAS_LIMIT_FALLBACK = BigNumber.from(1600000);
+
+function getFeeBumpPercent(): number {
+    const value = Number(process.env.NEXT_PUBLIC_EVM_FEE_BUMP_PERCENT || process.env.EVM_FEE_BUMP_PERCENT);
+    if (Number.isFinite(value) && value >= 100) return Math.floor(value);
+    return 150;
+}
+
+function bumpFee(value: BigNumber, percent = getFeeBumpPercent()): BigNumber {
+    return value.mul(percent).div(100);
+}
+
+function getMinPriorityFee(net: NetworkConfig): BigNumber | null {
+    const configured = process.env.NEXT_PUBLIC_ETH_MIN_PRIORITY_FEE_GWEI || process.env.ETH_MIN_PRIORITY_FEE_GWEI;
+    const gwei = configured || (net.chainKey === 'eth' ? '2' : '');
+    return gwei ? ethers.utils.parseUnits(gwei, 'gwei') : null;
+}
+
+function getFeeOverrides(net: NetworkConfig, feeData: ethers.providers.FeeData): ethers.utils.Deferrable<ethers.providers.TransactionRequest> {
+    if (feeData.maxFeePerGas || feeData.maxPriorityFeePerGas) {
+        const minPriorityFee = getMinPriorityFee(net);
+        const priorityFee = [feeData.maxPriorityFeePerGas, minPriorityFee]
+            .filter((value): value is BigNumber => Boolean(value))
+            .reduce((max, value) => value.gt(max) ? value : max, BigNumber.from(0));
+        if (priorityFee.isZero()) {
+            throw new Error('Failed to fetch network priority fee data');
+        }
+
+        const maxFeeBase = feeData.maxFeePerGas
+            ?? (feeData.lastBaseFeePerGas ? feeData.lastBaseFeePerGas.mul(2).add(priorityFee) : null);
+        if (!maxFeeBase) {
+            throw new Error('Failed to fetch network max fee data');
+        }
+        const maxFeePerGas = bumpFee(maxFeeBase);
+        return {
+            type: 2,
+            maxPriorityFeePerGas: priorityFee,
+            maxFeePerGas: maxFeePerGas.gt(priorityFee) ? maxFeePerGas : priorityFee.mul(2),
+        };
+    }
+
+    if (feeData.gasPrice) {
+        return { gasPrice: bumpFee(feeData.gasPrice) };
+    }
+
+    throw new Error('Failed to fetch network fee data');
+}
+
+function ceilDiv(value: BigNumber, divisor: BigNumber): BigNumber {
+    return value.add(divisor).sub(1).div(divisor);
+}
+
+function getFeePriceForRent(feeOverrides: ethers.utils.Deferrable<ethers.providers.TransactionRequest>): BigNumber {
+    const gasPrice = feeOverrides.gasPrice;
+    if (gasPrice) return BigNumber.from(gasPrice);
+
+    const maxFeePerGas = feeOverrides.maxFeePerGas;
+    if (maxFeePerGas) return BigNumber.from(maxFeePerGas);
+
+    throw new Error('Failed to calculate gas fee for rent fee');
+}
+
+function getEthPriceForToken(remoteConfig: RemoteConfig, token: PrivacyToken): number {
+    const price = remoteConfig.prices?.eth;
+    if (Number.isFinite(price) && price > 0) return price;
+
+    const ethRentFee = remoteConfig.rent_fees.eth;
+    const tokenRentFee = remoteConfig.rent_fees[token];
+    if (token !== 'eth' && ethRentFee > 0 && Number.isFinite(tokenRentFee) && tokenRentFee > 0) {
+        return tokenRentFee / ethRentFee;
+    }
+
+    throw new Error('ETH price is unavailable for dynamic rent fee calculation');
+}
+
+function gasFeeWeiToTokenUnits({
+    gasFeeWei,
+    isErc20,
+    tokenDecimals,
+    remoteConfig,
+    token,
+}: {
+    gasFeeWei: BigNumber;
+    isErc20: boolean;
+    tokenDecimals: number;
+    remoteConfig: RemoteConfig;
+    token: PrivacyToken;
+}): BigNumber {
+    if (!isErc20) return gasFeeWei;
+
+    const ethPrice = getEthPriceForToken(remoteConfig, token);
+    const priceUnits = ethers.utils.parseUnits(ethPrice.toFixed(tokenDecimals), tokenDecimals);
+    return ceilDiv(gasFeeWei.mul(priceUnits), ethers.constants.WeiPerEther);
+}
+
+async function estimateDynamicRentFee({
+    pool,
+    args,
+    extData,
+    readProvider,
+    net,
+    isErc20,
+    tokenDecimals,
+    remoteConfig,
+    token,
+}: {
+    pool: ethers.Contract;
+    args: any;
+    extData: any;
+    readProvider: ethers.providers.JsonRpcProvider;
+    net: NetworkConfig;
+    isErc20: boolean;
+    tokenDecimals: number;
+    remoteConfig: RemoteConfig;
+    token: PrivacyToken;
+}): Promise<BigNumber> {
+    const feeOverrides = getFeeOverrides(net, await readProvider.getFeeData());
+    const gasPrice = getFeePriceForRent(feeOverrides);
+
+    let gasLimit: BigNumber;
+    try {
+        gasLimit = await pool.estimateGas.transact(args, extData);
+        logger.debug(`Estimated withdraw gas: ${gasLimit.toString()}`);
+    } catch (err) {
+        gasLimit = WITHDRAW_GAS_LIMIT_FALLBACK;
+        logger.warn(`Failed to estimate withdraw gas; using fallback ${gasLimit.toString()}. Error:`, err);
+    }
+
+    const gasFeeWei = gasLimit.mul(gasPrice).mul(DYNAMIC_RENT_FEE_PERCENT).add(99).div(100);
+    return gasFeeWeiToTokenUnits({
+        gasFeeWei,
+        isErc20,
+        tokenDecimals,
+        remoteConfig,
+        token,
+    });
+}
+
+function formatTokenAmount(value: BigNumber, isErc20: boolean, tokenDecimals: number): string {
+    return isErc20 ? ethers.utils.formatUnits(value, tokenDecimals) : ethers.utils.formatEther(value);
+}
+
+function assertFeeFitsWithdrawal(fee: BigNumber, withdrawAmount: BigNumber, isErc20: boolean, tokenDecimals: number, tokenSymbol: string) {
+    if (fee.mul(2).gte(withdrawAmount)) {
+        throw new Error(
+            `Withdrawal amount must be more than twice the total fee. Fee is ${formatTokenAmount(fee, isErc20, tokenDecimals)} ${tokenSymbol}`,
+        );
+    }
+}
+
+function logWithdrawFeeBreakdown({
+    flatFee,
+    rateFee,
+    totalFee,
+    withdrawAmount,
+    feeRate,
+    isErc20,
+    tokenDecimals,
+    tokenSymbol,
+}: {
+    flatFee: BigNumber;
+    rateFee: BigNumber;
+    totalFee: BigNumber;
+    withdrawAmount: BigNumber;
+    feeRate: number;
+    isErc20: boolean;
+    tokenDecimals: number;
+    tokenSymbol: string;
+}) {
+    logger.info(
+        `Withdraw fee breakdown: rent/network fee=${formatTokenAmount(flatFee, isErc20, tokenDecimals)} ${tokenSymbol}, ` +
+        `protocol fee=${formatTokenAmount(rateFee, isErc20, tokenDecimals)} ${tokenSymbol} (${feeRate / 100}% of ${formatTokenAmount(withdrawAmount, isErc20, tokenDecimals)} ${tokenSymbol}), ` +
+        `total fee=${formatTokenAmount(totalFee, isErc20, tokenDecimals)} ${tokenSymbol}`,
+    );
+}
 
 export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, signature, address, token = 'eth', network }: {
     withdrawAmountInput: number,
@@ -85,20 +263,6 @@ export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, si
     }
 
     const inputSum = inputs.reduce((sum, u) => sum.add(u.amount), BigNumber.from(0));
-    const flatFee = isErc20
-        ? ethers.utils.parseUnits(rentFee.toFixed(tokenDecimals), tokenDecimals)
-        : ethers.utils.parseEther(rentFee.toFixed(18));
-    const fee = flatFee.add(withdrawAmount.mul(feeRate).div(10000));
-
-    if (isErc20) {
-        logger.debug(`Input UTXOs: ${inputs.length} (total: ${ethers.utils.formatUnits(inputSum, tokenDecimals)} ${tokenSymbol})`);
-        logger.debug(`Fee: ${ethers.utils.formatUnits(fee, tokenDecimals)} ${tokenSymbol} (${rentFee} ${tokenSymbol} + ${feeRate / 100}%)`);
-        logger.debug(`Amount to arrive at recipient: ${ethers.utils.formatUnits(withdrawAmount.sub(fee), tokenDecimals)} ${tokenSymbol}`);
-    } else {
-        logger.debug(`Input UTXOs: ${inputs.length} (total: ${ethers.utils.formatEther(inputSum)} ETH)`);
-        logger.debug(`Fee: ${ethers.utils.formatEther(fee)} ETH (${rentFee} + ${feeRate / 100}%)`);
-        logger.debug(`Amount to arrive at recipient: ${ethers.utils.formatEther(withdrawAmount.sub(fee))} ETH`);
-    }
 
     if (inputSum.lt(withdrawAmount)) {
         const have = isErc20 ? ethers.utils.formatUnits(inputSum, tokenDecimals) : ethers.utils.formatEther(inputSum);
@@ -117,6 +281,81 @@ export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, si
             ? `${ethers.utils.formatUnits(changeAmount, tokenDecimals)} ${tokenSymbol}`
             : `${ethers.utils.formatEther(changeAmount)} ETH`;
         logger.debug(`Change UTXO: ${formattedChange}`);
+    }
+
+    const fixedFlatFee = isErc20
+        ? ethers.utils.parseUnits(rentFee.toFixed(tokenDecimals), tokenDecimals)
+        : ethers.utils.parseEther(rentFee.toFixed(18));
+    let flatFee = fixedFlatFee;
+    const rateFee = withdrawAmount.mul(feeRate).div(10000);
+    let fee = flatFee.add(rateFee);
+
+    logWithdrawFeeBreakdown({
+        flatFee,
+        rateFee,
+        totalFee: fee,
+        withdrawAmount,
+        feeRate,
+        isErc20,
+        tokenDecimals,
+        tokenSymbol,
+    });
+    assertFeeFitsWithdrawal(fee, withdrawAmount, isErc20, tokenDecimals, tokenSymbol);
+
+    if (net.chainKey === 'eth') {
+        logger.info('estimating dynamic rent fee');
+        const estimated = await prepareTransaction({
+            inputs: inputs.slice(),
+            outputs: outputs.slice(),
+            recipient,
+            fee,
+            feeRecipient,
+            encryptionKey,
+            keyBasePath,
+            token,
+            network: net,
+        });
+        const dynamicFlatFee = await estimateDynamicRentFee({
+            pool,
+            args: estimated.args,
+            extData: estimated.extData,
+            readProvider,
+            net,
+            isErc20,
+            tokenDecimals,
+            remoteConfig,
+            token,
+        });
+
+        if (dynamicFlatFee.gt(flatFee)) {
+            flatFee = dynamicFlatFee;
+            fee = flatFee.add(rateFee);
+            logger.debug(`Dynamic rent fee applied: ${formatTokenAmount(flatFee, isErc20, tokenDecimals)} ${tokenSymbol}`);
+        } else {
+            logger.debug(`Fixed rent fee retained: ${formatTokenAmount(flatFee, isErc20, tokenDecimals)} ${tokenSymbol}`);
+        }
+
+        logWithdrawFeeBreakdown({
+            flatFee,
+            rateFee,
+            totalFee: fee,
+            withdrawAmount,
+            feeRate,
+            isErc20,
+            tokenDecimals,
+            tokenSymbol,
+        });
+        assertFeeFitsWithdrawal(fee, withdrawAmount, isErc20, tokenDecimals, tokenSymbol);
+    }
+
+    if (isErc20) {
+        logger.debug(`Input UTXOs: ${inputs.length} (total: ${ethers.utils.formatUnits(inputSum, tokenDecimals)} ${tokenSymbol})`);
+        logger.debug(`Fee: ${ethers.utils.formatUnits(fee, tokenDecimals)} ${tokenSymbol} (${ethers.utils.formatUnits(flatFee, tokenDecimals)} ${tokenSymbol} + ${feeRate / 100}%)`);
+        logger.debug(`Amount to arrive at recipient: ${ethers.utils.formatUnits(withdrawAmount.sub(fee), tokenDecimals)} ${tokenSymbol}`);
+    } else {
+        logger.debug(`Input UTXOs: ${inputs.length} (total: ${ethers.utils.formatEther(inputSum)} ETH)`);
+        logger.debug(`Fee: ${ethers.utils.formatEther(fee)} ETH (${ethers.utils.formatEther(flatFee)} + ${feeRate / 100}%)`);
+        logger.debug(`Amount to arrive at recipient: ${ethers.utils.formatEther(withdrawAmount.sub(fee))} ETH`);
     }
 
     logger.info('generating ZK proof')
