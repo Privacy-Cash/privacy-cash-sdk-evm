@@ -24,6 +24,9 @@ function bumpFee(value: BigNumber, percent = getFeeBumpPercent()): BigNumber {
     return value.mul(percent).div(100);
 }
 
+const MAX_PRIORITY_FEE_GWEI = '0.3';
+const MAX_PRIORITY_FEE = ethers.utils.parseUnits(MAX_PRIORITY_FEE_GWEI, 'gwei');
+
 function formatGwei(value?: BigNumber | null): string {
     return value ? ethers.utils.formatUnits(value, 'gwei') : 'null';
 }
@@ -32,6 +35,13 @@ function getMinPriorityFee(net: NetworkConfig): BigNumber | null {
     const configured = process.env.NEXT_PUBLIC_ETH_MIN_PRIORITY_FEE_GWEI || process.env.ETH_MIN_PRIORITY_FEE_GWEI;
     const gwei = configured || (net.chainKey === 'eth' ? '0.2' : '');
     return gwei ? ethers.utils.parseUnits(gwei, 'gwei') : null;
+}
+
+function selectPriorityFee(providerPriorityFee: BigNumber | null | undefined, minPriorityFee: BigNumber | null): BigNumber {
+    const priorityFee = providerPriorityFee && !providerPriorityFee.isZero()
+        ? providerPriorityFee
+        : (minPriorityFee ?? BigNumber.from(0));
+    return priorityFee.gt(MAX_PRIORITY_FEE) ? MAX_PRIORITY_FEE : priorityFee;
 }
 
 function getFeeOverrides(net: NetworkConfig, feeData: ethers.providers.FeeData): ethers.utils.Deferrable<ethers.providers.TransactionRequest> {
@@ -43,11 +53,10 @@ function getFeeOverrides(net: NetworkConfig, feeData: ethers.providers.FeeData):
             `maxPriorityFeePerGas=${formatGwei(feeData.maxPriorityFeePerGas)} gwei, ` +
             `lastBaseFeePerGas=${formatGwei(feeData.lastBaseFeePerGas)} gwei, ` +
             `defaultMinPriorityFee=${formatGwei(minPriorityFee)} gwei, ` +
+            `maxPriorityFeeCap=${MAX_PRIORITY_FEE_GWEI} gwei, ` +
             `feeBumpPercent=${getFeeBumpPercent()}`,
         );
-        const priorityFee = [feeData.maxPriorityFeePerGas, minPriorityFee]
-            .filter((value): value is BigNumber => Boolean(value))
-            .reduce((max, value) => value.gt(max) ? value : max, BigNumber.from(0));
+        const priorityFee = selectPriorityFee(feeData.maxPriorityFeePerGas, minPriorityFee);
         if (priorityFee.isZero()) {
             throw new Error('Failed to fetch network priority fee data');
         }
@@ -104,11 +113,10 @@ async function getRentFeeGasPrice(
             `maxPriorityFeePerGas=${formatGwei(feeData.maxPriorityFeePerGas)} gwei, ` +
             `lastBaseFeePerGas=${formatGwei(feeData.lastBaseFeePerGas)} gwei, ` +
             `defaultMinPriorityFee=${formatGwei(minPriorityFee)} gwei, ` +
+            `maxPriorityFeeCap=${MAX_PRIORITY_FEE_GWEI} gwei, ` +
             `baseFeeBumpPercent=${RENT_BASE_FEE_BUMP_PERCENT}`,
         );
-        const priorityFee = [feeData.maxPriorityFeePerGas, minPriorityFee]
-            .filter((value): value is BigNumber => Boolean(value))
-            .reduce((max, value) => value.gt(max) ? value : max, BigNumber.from(0));
+        const priorityFee = selectPriorityFee(feeData.maxPriorityFeePerGas, minPriorityFee);
         if (priorityFee.isZero()) {
             throw new Error('Failed to fetch network priority fee data');
         }
