@@ -11,7 +11,7 @@ import { Utxo } from './utils/utxo.js';
 function getFeeBumpPercent(): number {
     const value = Number(process.env.NEXT_PUBLIC_EVM_FEE_BUMP_PERCENT || process.env.EVM_FEE_BUMP_PERCENT);
     if (Number.isFinite(value) && value >= 100) return Math.floor(value);
-    return 100;
+    return 110;
 }
 
 function bumpFee(value: BigNumber, percent = getFeeBumpPercent()): BigNumber {
@@ -34,7 +34,13 @@ function getMinPriorityFee(net: NetworkConfig): BigNumber | null {
     return gwei ? ethers.utils.parseUnits(gwei, 'gwei') : null;
 }
 
-function getFeeOverrides(net: NetworkConfig, feeData: ethers.providers.FeeData): ethers.utils.Deferrable<ethers.providers.TransactionRequest> {
+async function getFeeOverrides(
+    net: NetworkConfig,
+    provider: ethers.providers.JsonRpcProvider,
+    feeData?: ethers.providers.FeeData,
+): Promise<ethers.utils.Deferrable<ethers.providers.TransactionRequest>> {
+    feeData ??= await provider.getFeeData();
+
     if (feeData.maxFeePerGas || feeData.maxPriorityFeePerGas) {
         const minPriorityFee = getMinPriorityFee(net);
         const priorityFee = [feeData.maxPriorityFeePerGas, minPriorityFee]
@@ -44,8 +50,13 @@ function getFeeOverrides(net: NetworkConfig, feeData: ethers.providers.FeeData):
             throw new Error('Failed to fetch network priority fee data');
         }
 
-        const maxFeeBase = feeData.maxFeePerGas
-            ?? (feeData.lastBaseFeePerGas ? feeData.lastBaseFeePerGas.mul(2).add(priorityFee) : null);
+        let maxFeeBase = feeData.maxFeePerGas;
+        if (!maxFeeBase) {
+            const latestBlock = await provider.getBlock('latest');
+            maxFeeBase = latestBlock?.baseFeePerGas
+                ? latestBlock.baseFeePerGas.mul(2).add(priorityFee)
+                : null;
+        }
         if (!maxFeeBase) {
             throw new Error('Failed to fetch network max fee data');
         }
@@ -216,7 +227,7 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
             readProvider.getNetwork(),
             readProvider.getFeeData(),
         ]);
-        const feeOverrides = getFeeOverrides(net, feeData);
+        const feeOverrides = await getFeeOverrides(net, readProvider, feeData);
         const allowance: BigNumber = await erc20.allowance(address, poolAddress);
         logger.debug(`Current ${tokenSymbol} allowance: ${ethers.utils.formatUnits(allowance, tokenDecimals)} ${tokenSymbol}`);
         if (allowance.lt(depositAmount)) {
@@ -272,7 +283,7 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
         const unsignedTx: ethers.utils.Deferrable<ethers.providers.TransactionRequest> = {
             ...partialTx,
             chainId: network2.chainId,
-            ...getFeeOverrides(net, feeData2),
+            ...(await getFeeOverrides(net, readProvider, feeData2)),
         };
         logger.info('waiting for user signature [deposit]');
         const tx = await txSender(unsignedTx, { stage: 'deposit', token, chain: net.chainKey });
@@ -315,7 +326,7 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
             nonce,
             chainId: network.chainId,
         };
-        Object.assign(unsignedTx, getFeeOverrides(net, feeData));
+        Object.assign(unsignedTx, await getFeeOverrides(net, readProvider, feeData));
 
         logger.info('waiting for user signature [deposit]');
         const tx = await txSender(unsignedTx);
