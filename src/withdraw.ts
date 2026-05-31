@@ -12,7 +12,7 @@ import { Utxo } from './utils/utxo.js';
 const DYNAMIC_RENT_FEE_PERCENT = 102;
 const RENT_BASE_FEE_BUMP_PERCENT = 102;
 const DYNAMIC_RENT_FEE_GAS_ESTIMATE_PERCENT = 50;
-const WITHDRAW_GAS_LIMIT_FALLBACK = BigNumber.from(1600000);
+const WITHDRAW_GAS_LIMIT = BigNumber.from(1600000);
 
 function getFeeBumpPercent(): number {
     const value = Number(process.env.NEXT_PUBLIC_EVM_FEE_BUMP_PERCENT || process.env.EVM_FEE_BUMP_PERCENT);
@@ -133,9 +133,6 @@ function gasFeeWeiToTokenUnits({
 }
 
 async function estimateDynamicRentFee({
-    pool,
-    args,
-    extData,
     readProvider,
     net,
     isErc20,
@@ -143,9 +140,6 @@ async function estimateDynamicRentFee({
     remoteConfig,
     token,
 }: {
-    pool: ethers.Contract;
-    args: any;
-    extData: any;
     readProvider: ethers.providers.JsonRpcProvider;
     net: NetworkConfig;
     isErc20: boolean;
@@ -155,17 +149,7 @@ async function estimateDynamicRentFee({
 }): Promise<BigNumber> {
     const feeData = await readProvider.getFeeData();
     const gasPrice = await getRentFeeGasPrice(net, readProvider, feeData);
-
-    let gasLimit: BigNumber;
-    try {
-        gasLimit = await pool.estimateGas.transact(args, extData);
-        logger.debug(`Estimated withdraw gas: ${gasLimit.toString()}`);
-    } catch (err) {
-        gasLimit = WITHDRAW_GAS_LIMIT_FALLBACK;
-        logger.warn(`Failed to estimate withdraw gas; using fallback ${gasLimit.toString()}. Error:`, err);
-    }
-
-    const rentFeeGasLimit = scaleDynamicRentFeeGasEstimate(gasLimit);
+    const rentFeeGasLimit = scaleDynamicRentFeeGasEstimate(WITHDRAW_GAS_LIMIT);
     const gasFeeWei = rentFeeGasLimit.mul(gasPrice).mul(DYNAMIC_RENT_FEE_PERCENT).add(99).div(100);
     return gasFeeWeiToTokenUnits({
         gasFeeWei,
@@ -332,21 +316,7 @@ export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, si
 
     if (net.chainKey === 'eth') {
         logger.info('estimating dynamic rent fee');
-        const estimated = await prepareTransaction({
-            inputs: inputs.slice(),
-            outputs: outputs.slice(),
-            recipient,
-            fee,
-            feeRecipient,
-            encryptionKey,
-            keyBasePath,
-            token,
-            network: net,
-        });
         const dynamicFlatFee = await estimateDynamicRentFee({
-            pool,
-            args: estimated.args,
-            extData: estimated.extData,
             readProvider,
             net,
             isErc20,
