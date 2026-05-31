@@ -11,11 +11,18 @@ import { Utxo } from './utils/utxo.js';
 function getFeeBumpPercent(): number {
     const value = Number(process.env.NEXT_PUBLIC_EVM_FEE_BUMP_PERCENT || process.env.EVM_FEE_BUMP_PERCENT);
     if (Number.isFinite(value) && value >= 100) return Math.floor(value);
-    return 150;
+    return 110;
 }
 
 function bumpFee(value: BigNumber, percent = getFeeBumpPercent()): BigNumber {
     return value.mul(percent).div(100);
+}
+
+const MAX_PRIORITY_FEE_GWEI = '0.3';
+const MAX_PRIORITY_FEE = ethers.utils.parseUnits(MAX_PRIORITY_FEE_GWEI, 'gwei');
+
+function formatGwei(value?: BigNumber | null): string {
+    return value ? ethers.utils.formatUnits(value, 'gwei') : 'null';
 }
 
 function getGasLimitBumpPercent(): number {
@@ -30,35 +37,74 @@ function bumpGasLimit(value: BigNumber, percent = getGasLimitBumpPercent()): Big
 
 function getMinPriorityFee(net: NetworkConfig): BigNumber | null {
     const configured = process.env.NEXT_PUBLIC_ETH_MIN_PRIORITY_FEE_GWEI || process.env.ETH_MIN_PRIORITY_FEE_GWEI;
-    const gwei = configured || (net.chainKey === 'eth' ? '2' : '');
+    const gwei = configured || (net.chainKey === 'eth' ? '0.2' : '');
     return gwei ? ethers.utils.parseUnits(gwei, 'gwei') : null;
 }
 
-function getFeeOverrides(net: NetworkConfig, feeData: ethers.providers.FeeData): ethers.utils.Deferrable<ethers.providers.TransactionRequest> {
+function selectPriorityFee(providerPriorityFee: BigNumber | null | undefined, minPriorityFee: BigNumber | null): BigNumber {
+    const priorityFee = providerPriorityFee && !providerPriorityFee.isZero()
+        ? providerPriorityFee
+        : (minPriorityFee ?? BigNumber.from(0));
+    return priorityFee.gt(MAX_PRIORITY_FEE) ? MAX_PRIORITY_FEE : priorityFee;
+}
+
+async function getFeeOverrides(
+    net: NetworkConfig,
+    provider: ethers.providers.JsonRpcProvider,
+    feeData?: ethers.providers.FeeData,
+): Promise<ethers.utils.Deferrable<ethers.providers.TransactionRequest>> {
+    feeData ??= await provider.getFeeData();
+
     if (feeData.maxFeePerGas || feeData.maxPriorityFeePerGas) {
         const minPriorityFee = getMinPriorityFee(net);
-        const priorityFee = [feeData.maxPriorityFeePerGas, minPriorityFee]
-            .filter((value): value is BigNumber => Boolean(value))
-            .reduce((max, value) => value.gt(max) ? value : max, BigNumber.from(0));
+        logger.debug(
+            `Deposit feeData: gasPrice=${formatGwei(feeData.gasPrice)} gwei, ` +
+            `maxFeePerGas=${formatGwei(feeData.maxFeePerGas)} gwei, ` +
+            `maxPriorityFeePerGas=${formatGwei(feeData.maxPriorityFeePerGas)} gwei, ` +
+            `lastBaseFeePerGas=${formatGwei(feeData.lastBaseFeePerGas)} gwei, ` +
+            `defaultMinPriorityFee=${formatGwei(minPriorityFee)} gwei, ` +
+            `maxPriorityFeeCap=${MAX_PRIORITY_FEE_GWEI} gwei, ` +
+            `feeBumpPercent=${getFeeBumpPercent()}`,
+        );
+        const priorityFee = selectPriorityFee(feeData.maxPriorityFeePerGas, minPriorityFee);
         if (priorityFee.isZero()) {
             throw new Error('Failed to fetch network priority fee data');
         }
 
-        const maxFeeBase = feeData.maxFeePerGas
-            ?? (feeData.lastBaseFeePerGas ? feeData.lastBaseFeePerGas.mul(2).add(priorityFee) : null);
+        let maxFeeBase = feeData.maxFeePerGas;
+        let fallbackBaseFee: BigNumber | null = null;
+        if (!maxFeeBase) {
+            const latestBlock = await provider.getBlock('latest');
+            fallbackBaseFee = latestBlock?.baseFeePerGas ?? null;
+            maxFeeBase = latestBlock?.baseFeePerGas
+                ? latestBlock.baseFeePerGas.mul(2).add(priorityFee)
+                : null;
+        }
         if (!maxFeeBase) {
             throw new Error('Failed to fetch network max fee data');
         }
         const maxFeePerGas = bumpFee(maxFeeBase);
+        const finalMaxFeePerGas = maxFeePerGas.gt(priorityFee) ? maxFeePerGas : priorityFee.mul(2);
+        logger.debug(
+            `Deposit fee overrides: selectedPriorityFee=${formatGwei(priorityFee)} gwei, ` +
+            `fallbackLatestBaseFee=${formatGwei(fallbackBaseFee)} gwei, ` +
+            `maxFeeBase=${formatGwei(maxFeeBase)} gwei, ` +
+            `finalMaxFeePerGas=${formatGwei(finalMaxFeePerGas)} gwei`,
+        );
         return {
             type: 2,
             maxPriorityFeePerGas: priorityFee,
-            maxFeePerGas: maxFeePerGas.gt(priorityFee) ? maxFeePerGas : priorityFee.mul(2),
+            maxFeePerGas: finalMaxFeePerGas,
         };
     }
 
     if (feeData.gasPrice) {
-        return { gasPrice: bumpFee(feeData.gasPrice) };
+        const gasPrice = bumpFee(feeData.gasPrice);
+        logger.debug(
+            `Deposit legacy feeData: providerGasPrice=${formatGwei(feeData.gasPrice)} gwei, ` +
+            `finalGasPrice=${formatGwei(gasPrice)} gwei, feeBumpPercent=${getFeeBumpPercent()}`,
+        );
+        return { gasPrice };
     }
 
     throw new Error('Failed to fetch network fee data');
@@ -216,7 +262,7 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
             readProvider.getNetwork(),
             readProvider.getFeeData(),
         ]);
-        const feeOverrides = getFeeOverrides(net, feeData);
+        const feeOverrides = await getFeeOverrides(net, readProvider, feeData);
         const allowance: BigNumber = await erc20.allowance(address, poolAddress);
         logger.debug(`Current ${tokenSymbol} allowance: ${ethers.utils.formatUnits(allowance, tokenDecimals)} ${tokenSymbol}`);
         if (allowance.lt(depositAmount)) {
@@ -272,7 +318,7 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
         const unsignedTx: ethers.utils.Deferrable<ethers.providers.TransactionRequest> = {
             ...partialTx,
             chainId: network2.chainId,
-            ...getFeeOverrides(net, feeData2),
+            ...(await getFeeOverrides(net, readProvider, feeData2)),
         };
         logger.info('waiting for user signature [deposit]');
         const tx = await txSender(unsignedTx, { stage: 'deposit', token, chain: net.chainKey });
@@ -315,7 +361,7 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
             nonce,
             chainId: network.chainId,
         };
-        Object.assign(unsignedTx, getFeeOverrides(net, feeData));
+        Object.assign(unsignedTx, await getFeeOverrides(net, readProvider, feeData));
 
         logger.info('waiting for user signature [deposit]');
         const tx = await txSender(unsignedTx);
