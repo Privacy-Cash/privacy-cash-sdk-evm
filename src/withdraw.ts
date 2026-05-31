@@ -24,6 +24,10 @@ function bumpFee(value: BigNumber, percent = getFeeBumpPercent()): BigNumber {
     return value.mul(percent).div(100);
 }
 
+function formatGwei(value?: BigNumber | null): string {
+    return value ? ethers.utils.formatUnits(value, 'gwei') : 'null';
+}
+
 function getMinPriorityFee(net: NetworkConfig): BigNumber | null {
     const configured = process.env.NEXT_PUBLIC_ETH_MIN_PRIORITY_FEE_GWEI || process.env.ETH_MIN_PRIORITY_FEE_GWEI;
     const gwei = configured || (net.chainKey === 'eth' ? '0.2' : '');
@@ -33,6 +37,14 @@ function getMinPriorityFee(net: NetworkConfig): BigNumber | null {
 function getFeeOverrides(net: NetworkConfig, feeData: ethers.providers.FeeData): ethers.utils.Deferrable<ethers.providers.TransactionRequest> {
     if (feeData.maxFeePerGas || feeData.maxPriorityFeePerGas) {
         const minPriorityFee = getMinPriorityFee(net);
+        logger.debug(
+            `Withdraw feeData: gasPrice=${formatGwei(feeData.gasPrice)} gwei, ` +
+            `maxFeePerGas=${formatGwei(feeData.maxFeePerGas)} gwei, ` +
+            `maxPriorityFeePerGas=${formatGwei(feeData.maxPriorityFeePerGas)} gwei, ` +
+            `lastBaseFeePerGas=${formatGwei(feeData.lastBaseFeePerGas)} gwei, ` +
+            `defaultMinPriorityFee=${formatGwei(minPriorityFee)} gwei, ` +
+            `feeBumpPercent=${getFeeBumpPercent()}`,
+        );
         const priorityFee = [feeData.maxPriorityFeePerGas, minPriorityFee]
             .filter((value): value is BigNumber => Boolean(value))
             .reduce((max, value) => value.gt(max) ? value : max, BigNumber.from(0));
@@ -46,15 +58,26 @@ function getFeeOverrides(net: NetworkConfig, feeData: ethers.providers.FeeData):
             throw new Error('Failed to fetch network max fee data');
         }
         const maxFeePerGas = bumpFee(maxFeeBase);
+        const finalMaxFeePerGas = maxFeePerGas.gt(priorityFee) ? maxFeePerGas : priorityFee.mul(2);
+        logger.debug(
+            `Withdraw fee overrides: selectedPriorityFee=${formatGwei(priorityFee)} gwei, ` +
+            `maxFeeBase=${formatGwei(maxFeeBase)} gwei, ` +
+            `finalMaxFeePerGas=${formatGwei(finalMaxFeePerGas)} gwei`,
+        );
         return {
             type: 2,
             maxPriorityFeePerGas: priorityFee,
-            maxFeePerGas: maxFeePerGas.gt(priorityFee) ? maxFeePerGas : priorityFee.mul(2),
+            maxFeePerGas: finalMaxFeePerGas,
         };
     }
 
     if (feeData.gasPrice) {
-        return { gasPrice: bumpFee(feeData.gasPrice) };
+        const gasPrice = bumpFee(feeData.gasPrice);
+        logger.debug(
+            `Withdraw legacy feeData: providerGasPrice=${formatGwei(feeData.gasPrice)} gwei, ` +
+            `finalGasPrice=${formatGwei(gasPrice)} gwei, feeBumpPercent=${getFeeBumpPercent()}`,
+        );
+        return { gasPrice };
     }
 
     throw new Error('Failed to fetch network fee data');
@@ -75,6 +98,14 @@ async function getRentFeeGasPrice(
 ): Promise<BigNumber> {
     if (feeData.maxFeePerGas || feeData.maxPriorityFeePerGas) {
         const minPriorityFee = getMinPriorityFee(net);
+        logger.debug(
+            `Withdraw rent feeData: gasPrice=${formatGwei(feeData.gasPrice)} gwei, ` +
+            `maxFeePerGas=${formatGwei(feeData.maxFeePerGas)} gwei, ` +
+            `maxPriorityFeePerGas=${formatGwei(feeData.maxPriorityFeePerGas)} gwei, ` +
+            `lastBaseFeePerGas=${formatGwei(feeData.lastBaseFeePerGas)} gwei, ` +
+            `defaultMinPriorityFee=${formatGwei(minPriorityFee)} gwei, ` +
+            `baseFeeBumpPercent=${RENT_BASE_FEE_BUMP_PERCENT}`,
+        );
         const priorityFee = [feeData.maxPriorityFeePerGas, minPriorityFee]
             .filter((value): value is BigNumber => Boolean(value))
             .reduce((max, value) => value.gt(max) ? value : max, BigNumber.from(0));
@@ -85,15 +116,27 @@ async function getRentFeeGasPrice(
         const latestBlock = await provider.getBlock('latest');
         const baseFee = latestBlock?.baseFeePerGas ?? null;
         if (baseFee) {
-            return bumpFee(baseFee, RENT_BASE_FEE_BUMP_PERCENT).add(priorityFee);
+            const gasPrice = bumpFee(baseFee, RENT_BASE_FEE_BUMP_PERCENT).add(priorityFee);
+            logger.debug(
+                `Withdraw rent gas price: latestBaseFee=${formatGwei(baseFee)} gwei, ` +
+                `selectedPriorityFee=${formatGwei(priorityFee)} gwei, ` +
+                `finalGasPrice=${formatGwei(gasPrice)} gwei`,
+            );
+            return gasPrice;
         }
         if (feeData.maxFeePerGas) {
+            logger.debug(`Withdraw rent gas price fallback: providerMaxFeePerGas=${formatGwei(feeData.maxFeePerGas)} gwei`);
             return BigNumber.from(feeData.maxFeePerGas);
         }
     }
 
     if (feeData.gasPrice) {
-        return bumpFee(feeData.gasPrice);
+        const gasPrice = bumpFee(feeData.gasPrice);
+        logger.debug(
+            `Withdraw rent legacy gas price: providerGasPrice=${formatGwei(feeData.gasPrice)} gwei, ` +
+            `finalGasPrice=${formatGwei(gasPrice)} gwei`,
+        );
+        return gasPrice;
     }
 
     throw new Error('Failed to calculate gas fee for rent fee');

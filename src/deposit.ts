@@ -18,6 +18,10 @@ function bumpFee(value: BigNumber, percent = getFeeBumpPercent()): BigNumber {
     return value.mul(percent).div(100);
 }
 
+function formatGwei(value?: BigNumber | null): string {
+    return value ? ethers.utils.formatUnits(value, 'gwei') : 'null';
+}
+
 function getGasLimitBumpPercent(): number {
     const value = Number(process.env.NEXT_PUBLIC_EVM_GAS_LIMIT_BUMP_PERCENT || process.env.EVM_GAS_LIMIT_BUMP_PERCENT);
     if (Number.isFinite(value) && value >= 100) return Math.floor(value);
@@ -43,6 +47,14 @@ async function getFeeOverrides(
 
     if (feeData.maxFeePerGas || feeData.maxPriorityFeePerGas) {
         const minPriorityFee = getMinPriorityFee(net);
+        logger.debug(
+            `Deposit feeData: gasPrice=${formatGwei(feeData.gasPrice)} gwei, ` +
+            `maxFeePerGas=${formatGwei(feeData.maxFeePerGas)} gwei, ` +
+            `maxPriorityFeePerGas=${formatGwei(feeData.maxPriorityFeePerGas)} gwei, ` +
+            `lastBaseFeePerGas=${formatGwei(feeData.lastBaseFeePerGas)} gwei, ` +
+            `defaultMinPriorityFee=${formatGwei(minPriorityFee)} gwei, ` +
+            `feeBumpPercent=${getFeeBumpPercent()}`,
+        );
         const priorityFee = [feeData.maxPriorityFeePerGas, minPriorityFee]
             .filter((value): value is BigNumber => Boolean(value))
             .reduce((max, value) => value.gt(max) ? value : max, BigNumber.from(0));
@@ -51,8 +63,10 @@ async function getFeeOverrides(
         }
 
         let maxFeeBase = feeData.maxFeePerGas;
+        let fallbackBaseFee: BigNumber | null = null;
         if (!maxFeeBase) {
             const latestBlock = await provider.getBlock('latest');
+            fallbackBaseFee = latestBlock?.baseFeePerGas ?? null;
             maxFeeBase = latestBlock?.baseFeePerGas
                 ? latestBlock.baseFeePerGas.mul(2).add(priorityFee)
                 : null;
@@ -61,15 +75,27 @@ async function getFeeOverrides(
             throw new Error('Failed to fetch network max fee data');
         }
         const maxFeePerGas = bumpFee(maxFeeBase);
+        const finalMaxFeePerGas = maxFeePerGas.gt(priorityFee) ? maxFeePerGas : priorityFee.mul(2);
+        logger.debug(
+            `Deposit fee overrides: selectedPriorityFee=${formatGwei(priorityFee)} gwei, ` +
+            `fallbackLatestBaseFee=${formatGwei(fallbackBaseFee)} gwei, ` +
+            `maxFeeBase=${formatGwei(maxFeeBase)} gwei, ` +
+            `finalMaxFeePerGas=${formatGwei(finalMaxFeePerGas)} gwei`,
+        );
         return {
             type: 2,
             maxPriorityFeePerGas: priorityFee,
-            maxFeePerGas: maxFeePerGas.gt(priorityFee) ? maxFeePerGas : priorityFee.mul(2),
+            maxFeePerGas: finalMaxFeePerGas,
         };
     }
 
     if (feeData.gasPrice) {
-        return { gasPrice: bumpFee(feeData.gasPrice) };
+        const gasPrice = bumpFee(feeData.gasPrice);
+        logger.debug(
+            `Deposit legacy feeData: providerGasPrice=${formatGwei(feeData.gasPrice)} gwei, ` +
+            `finalGasPrice=${formatGwei(gasPrice)} gwei, feeBumpPercent=${getFeeBumpPercent()}`,
+        );
+        return { gasPrice };
     }
 
     throw new Error('Failed to fetch network fee data');
