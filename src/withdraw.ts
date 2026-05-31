@@ -9,8 +9,9 @@ import { getRemoteConfig } from './utils/remoteConfig.js';
 import { findUnspentUtxos, prepareTransaction, toFixedHex } from './utils/utils.js';
 import { Utxo } from './utils/utxo.js';
 
-const DYNAMIC_RENT_FEE_PERCENT = 105;
-const RENT_BASE_FEE_BUMP_PERCENT = 105;
+const DYNAMIC_RENT_FEE_PERCENT = 102;
+const RENT_BASE_FEE_BUMP_PERCENT = 102;
+const DYNAMIC_RENT_FEE_GAS_ESTIMATE_PERCENT = 50;
 const WITHDRAW_GAS_LIMIT_FALLBACK = BigNumber.from(1600000);
 
 function getFeeBumpPercent(): number {
@@ -25,7 +26,7 @@ function bumpFee(value: BigNumber, percent = getFeeBumpPercent()): BigNumber {
 
 function getMinPriorityFee(net: NetworkConfig): BigNumber | null {
     const configured = process.env.NEXT_PUBLIC_ETH_MIN_PRIORITY_FEE_GWEI || process.env.ETH_MIN_PRIORITY_FEE_GWEI;
-    const gwei = configured || (net.chainKey === 'eth' ? '0.6' : '');
+    const gwei = configured || (net.chainKey === 'eth' ? '0.2' : '');
     return gwei ? ethers.utils.parseUnits(gwei, 'gwei') : null;
 }
 
@@ -63,6 +64,10 @@ function ceilDiv(value: BigNumber, divisor: BigNumber): BigNumber {
     return value.add(divisor).sub(1).div(divisor);
 }
 
+function scaleDynamicRentFeeGasEstimate(value: BigNumber): BigNumber {
+    return value.mul(DYNAMIC_RENT_FEE_GAS_ESTIMATE_PERCENT).add(99).div(100);
+}
+
 async function getRentFeeGasPrice(
     net: NetworkConfig,
     provider: ethers.providers.JsonRpcProvider,
@@ -77,9 +82,8 @@ async function getRentFeeGasPrice(
             throw new Error('Failed to fetch network priority fee data');
         }
 
-        const latestBlock = feeData.lastBaseFeePerGas ? null : await provider.getBlock('latest');
-        const baseFee = feeData.lastBaseFeePerGas
-            ?? (latestBlock?.baseFeePerGas ?? null);
+        const latestBlock = await provider.getBlock('latest');
+        const baseFee = latestBlock?.baseFeePerGas ?? null;
         if (baseFee) {
             return bumpFee(baseFee, RENT_BASE_FEE_BUMP_PERCENT).add(priorityFee);
         }
@@ -161,7 +165,8 @@ async function estimateDynamicRentFee({
         logger.warn(`Failed to estimate withdraw gas; using fallback ${gasLimit.toString()}. Error:`, err);
     }
 
-    const gasFeeWei = gasLimit.mul(gasPrice).mul(DYNAMIC_RENT_FEE_PERCENT).add(99).div(100);
+    const rentFeeGasLimit = scaleDynamicRentFeeGasEstimate(gasLimit);
+    const gasFeeWei = rentFeeGasLimit.mul(gasPrice).mul(DYNAMIC_RENT_FEE_PERCENT).add(99).div(100);
     return gasFeeWeiToTokenUnits({
         gasFeeWei,
         isErc20,
