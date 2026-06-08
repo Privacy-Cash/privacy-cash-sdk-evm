@@ -24,7 +24,7 @@ function bumpFee(value: BigNumber, percent = getFeeBumpPercent()): BigNumber {
     return value.mul(percent).div(100);
 }
 
-const MAX_PRIORITY_FEE_GWEI = '0.3';
+const MAX_PRIORITY_FEE_GWEI = process.env.NEXT_PUBLIC_MAX_PRIORITY_FEE_GWEI || process.env.MAX_PRIORITY_FEE_GWEI || '0.6';
 const MAX_PRIORITY_FEE = ethers.utils.parseUnits(MAX_PRIORITY_FEE_GWEI, 'gwei');
 
 function formatGwei(value?: BigNumber | null): string {
