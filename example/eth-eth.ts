@@ -1,6 +1,7 @@
 import { ethers } from 'ethers';
 import { ETH_NETWORK, deposit, getBalance, withdraw } from '../src/index.js';
 import { SIGN_PRIVACY_MESSAGE } from '../src/utils/constants.js';
+import { getFreshEthFeeSnapshot } from './ethFeeSnapshot.js';
 import { waitForTxConfirmation } from './waitForTx.js';
 
 if (!process.env.PRIVATE_KEY) {
@@ -72,6 +73,8 @@ async function testSDK(testType: string, amountArg?: string) {
         else if (testType === 'withdraw') {
             const withdrawAmount = parseRequiredAmount(amountArg, 'withdraw');
             console.log(`\n Performing ETH Withdrawal of ${withdrawAmount} ETH...`);
+            const feeSnapshot = await getFreshEthFeeSnapshot(network, 'eth');
+            console.log(`Using fee snapshot ${feeSnapshot.id}, expires in ${Math.floor((feeSnapshot.expiresAt - Date.now()) / 1000)}s`);
 
             const withdrawResult = await withdraw({
                 withdrawAmountInput: withdrawAmount,
@@ -80,6 +83,7 @@ async function testSDK(testType: string, amountArg?: string) {
                 signature,
                 address: await signer.getAddress(),
                 network,
+                feeSnapshot,
             });
             console.log(`Withdrawal successful! TX: ${withdrawResult}`);
         }
