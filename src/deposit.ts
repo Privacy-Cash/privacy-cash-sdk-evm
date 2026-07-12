@@ -3,7 +3,7 @@ import ERCPoolAbi from './utils/ERCPool.abi.json' with { type: 'json' };
 import EtherPoolAbi from './utils/EtherPool.abi.json' with { type: 'json' };
 import { deriveKeys } from './utils/encryption.js';
 import { logger } from './utils/logger.js';
-import { NetworkConfig, PrivacyToken, getErc20TokenConfig, resolveNetwork } from './utils/networkConfig.js';
+import { NetworkConfig, PrivacyToken, getErc20TokenConfig, resolveNetwork, resolvePrivacyToken } from './utils/networkConfig.js';
 import { getRemoteConfig } from './utils/remoteConfig.js';
 import { findUnspentUtxos, prepareTransaction, toFixedHex } from './utils/utils.js';
 import { Utxo } from './utils/utxo.js';
@@ -54,6 +54,11 @@ async function getFeeOverrides(
     feeData?: ethers.providers.FeeData,
 ): Promise<ethers.utils.Deferrable<ethers.providers.TransactionRequest>> {
     feeData ??= await provider.getFeeData();
+
+    // BNB Smart Chain's legacy gasPrice is the most widely supported path.
+    if (net.chainKey === 'bnb' && feeData.gasPrice) {
+        return { gasPrice: bumpFee(feeData.gasPrice) };
+    }
 
     if (feeData.maxFeePerGas || feeData.maxPriorityFeePerGas) {
         const minPriorityFee = getMinPriorityFee(net);
@@ -134,7 +139,7 @@ async function estimateTransactGasLimit({
     }
 }
 
-export async function deposit({ depositAmountInput, keyBasePath, signature, address, txSender, token = 'eth', network }: {
+export async function deposit({ depositAmountInput, keyBasePath, signature, address, txSender, token, network }: {
     depositAmountInput: number,
     keyBasePath: string,
     signature: string,
@@ -144,17 +149,18 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
     network?: NetworkConfig | number,
 }) {
     const net = resolveNetwork(network);
+    const resolvedToken = resolvePrivacyToken(net, token);
     const readProvider = new ethers.providers.JsonRpcProvider(net.rpcUrl, {
         name: net.chainKey,
         chainId: net.chainId,
     });
-    const erc20Token = getErc20TokenConfig(net, token);
+    const erc20Token = getErc20TokenConfig(net, resolvedToken);
     const isErc20 = erc20Token !== null;
-    const tokenSymbol = erc20Token?.symbol ?? 'ETH';
+    const tokenSymbol = erc20Token?.symbol ?? net.nativeSymbol ?? (net.chainKey === 'bnb' ? 'BNB' : 'ETH');
     const tokenDecimals = erc20Token?.decimals ?? 18;
 
     const remoteConfig = await getRemoteConfig(net);
-    const minDeposit = remoteConfig.minimum_deposit[token];
+    const minDeposit = remoteConfig.minimum_deposit[resolvedToken];
 
     if (isErc20) {
         if (depositAmountInput < minDeposit) {
@@ -162,7 +168,7 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
         }
     } else {
         if (depositAmountInput < minDeposit) {
-            throw new Error(`Deposit amount must be at least ${minDeposit} ETH`);
+            throw new Error(`Deposit amount must be at least ${minDeposit} ${tokenSymbol}`);
         }
     }
 
@@ -179,7 +185,7 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
     if (!isErc20) {
         const poolBalance = await readProvider.getBalance(pool.address);
         logger.debug(`EtherPool: ${pool.address}`);
-        logger.debug(`Pool balance: ${ethers.utils.formatEther(poolBalance)} ETH`);
+        logger.debug(`Pool balance: ${ethers.utils.formatEther(poolBalance)} ${tokenSymbol}`);
     }
 
     const depositAmount = isErc20
@@ -190,7 +196,7 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
     if (depositAmount.gt(maxDeposit)) {
         const formatted = isErc20
             ? `${ethers.utils.formatUnits(maxDeposit, tokenDecimals)} ${tokenSymbol}`
-            : `${ethers.utils.formatEther(maxDeposit)} ETH`;
+            : `${ethers.utils.formatEther(maxDeposit)} ${tokenSymbol}`;
         throw new Error(`Please deposit less than ${formatted}`);
     }
 
@@ -222,7 +228,7 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
         encryptionKey,
         keypair,
         address,
-        token,
+        token: resolvedToken,
         network: net,
     });
     logger.debug(`Unspent UTXOs found: ${unspent.length}`);
@@ -245,7 +251,7 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
 
     const formattedOutput = isErc20
         ? `${ethers.utils.formatUnits(outputAmount, tokenDecimals)} ${tokenSymbol}`
-        : `${ethers.utils.formatEther(outputAmount)} ETH`;
+        : `${ethers.utils.formatEther(outputAmount)} ${tokenSymbol}`;
     logger.debug(`Depositing ${depositAmountInput} ${tokenSymbol} (new output: ${formattedOutput})`);
 
     if (isErc20 && erc20Token) {
@@ -266,7 +272,7 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
         const allowance: BigNumber = await erc20.allowance(address, poolAddress);
         logger.debug(`Current ${tokenSymbol} allowance: ${ethers.utils.formatUnits(allowance, tokenDecimals)} ${tokenSymbol}`);
         if (allowance.lt(depositAmount)) {
-            if (token === 'usdt' && allowance.gt(0)) {
+            if (resolvedToken === 'usdt' && allowance.gt(0)) {
                 const resetApproveTx = await erc20.populateTransaction.approve(poolAddress, 0);
                 const unsignedResetApproveTx: ethers.utils.Deferrable<ethers.providers.TransactionRequest> = {
                     ...resetApproveTx,
@@ -274,7 +280,7 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
                     ...feeOverrides,
                 };
                 logger.info('waiting for user signature [approve-reset]');
-                await txSender(unsignedResetApproveTx, { stage: 'approve-reset', token, chain: net.chainKey });
+                await txSender(unsignedResetApproveTx, { stage: 'approve-reset', token: resolvedToken, chain: net.chainKey });
             }
 
             const approveTx = await erc20.populateTransaction.approve(poolAddress, depositAmount);
@@ -284,7 +290,7 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
                 ...feeOverrides,
             };
             logger.info('waiting for user signature [approve]');
-            await txSender(unsignedApproveTx, { stage: 'approve', token, chain: net.chainKey });
+            await txSender(unsignedApproveTx, { stage: 'approve', token: resolvedToken, chain: net.chainKey });
         } else {
             logger.info(`${tokenSymbol} allowance is sufficient; skipping approve`);
         }
@@ -298,7 +304,7 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
             outputs: [outputUtxo],
             encryptionKey,
             keyBasePath,
-            token,
+            token: resolvedToken,
             network: net,
         });
 
@@ -321,10 +327,10 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
             ...(await getFeeOverrides(net, readProvider, feeData2)),
         };
         logger.info('waiting for user signature [deposit]');
-        const tx = await txSender(unsignedTx, { stage: 'deposit', token, chain: net.chainKey });
+        const tx = await txSender(unsignedTx, { stage: 'deposit', token: resolvedToken, chain: net.chainKey });
 
         logger.info('confirming transaction');
-        await confirmEncryptedOutput(extData.encryptedOutput1, token, net);
+        await confirmEncryptedOutput(extData.encryptedOutput1, resolvedToken, net);
         return tx;
     } else {
         logger.info('generating ZK proof')
@@ -333,7 +339,7 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
             outputs: [outputUtxo],
             encryptionKey,
             keyBasePath,
-            token,
+            token: resolvedToken,
             network: net,
         });
         const gasLimit = await estimateTransactGasLimit({
@@ -366,7 +372,7 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
         logger.info('waiting for user signature [deposit]');
         const tx = await txSender(unsignedTx);
         logger.info('confirming transaction');
-        await confirmEncryptedOutput(extData.encryptedOutput1, token, net);
+        await confirmEncryptedOutput(extData.encryptedOutput1, resolvedToken, net);
         return tx;
     }
 }

@@ -3,7 +3,7 @@ import ERCPoolAbi from './utils/ERCPool.abi.json' with { type: 'json' };
 import EtherPoolAbi from './utils/EtherPool.abi.json' with { type: 'json' };
 import { deriveKeys } from './utils/encryption.js';
 import { logger } from './utils/logger.js';
-import { NetworkConfig, PrivacyToken, getErc20TokenConfig, resolveNetwork } from './utils/networkConfig.js';
+import { NetworkConfig, PrivacyToken, getErc20TokenConfig, resolveNetwork, resolvePrivacyToken } from './utils/networkConfig.js';
 import type { FeeSnapshot, RemoteConfig } from './utils/remoteConfig.js';
 import { getRemoteConfig } from './utils/remoteConfig.js';
 import { findUnspentUtxos, prepareTransaction, toFixedHex } from './utils/utils.js';
@@ -136,7 +136,7 @@ function logWithdrawFeeBreakdown({
     );
 }
 
-export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, signature, address, token = 'eth', network, feeSnapshot }: {
+export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, signature, address, token, network, feeSnapshot }: {
     withdrawAmountInput: number,
     recipient: string,
     keyBasePath: string,
@@ -151,22 +151,23 @@ export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, si
     }
 
     const net = resolveNetwork(network);
-    const erc20Token = getErc20TokenConfig(net, token);
+    const resolvedToken = resolvePrivacyToken(net, token);
+    const erc20Token = getErc20TokenConfig(net, resolvedToken);
     const isErc20 = erc20Token !== null;
-    const tokenSymbol = erc20Token?.symbol ?? 'ETH';
+    const tokenSymbol = erc20Token?.symbol ?? net.nativeSymbol ?? (net.chainKey === 'bnb' ? 'BNB' : 'ETH');
     const tokenDecimals = erc20Token?.decimals ?? 18;
 
     let remoteConfig = await getRemoteConfig(net);
     const snapshotResolution = await resolveFeeSnapshot({
         net,
-        token,
+        token: resolvedToken,
         remoteConfig,
         feeSnapshot,
     });
     remoteConfig = snapshotResolution.remoteConfig;
     const activeFeeSnapshot = snapshotResolution.feeSnapshot;
-    const minWithdrawal = remoteConfig.minimum_withdrawal[token];
-    const rentFee = remoteConfig.rent_fees[token];
+    const minWithdrawal = remoteConfig.minimum_withdrawal[resolvedToken];
+    const rentFee = remoteConfig.rent_fees[resolvedToken];
     const feeRate = activeFeeSnapshot?.feeRateBps ?? remoteConfig.fee_rate;
 
     if (isErc20) {
@@ -175,7 +176,7 @@ export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, si
         }
     } else {
         if (withdrawAmountInput < minWithdrawal) {
-            throw new Error(`Withdrawal amount must be at least ${minWithdrawal} ETH`);
+            throw new Error(`Withdrawal amount must be at least ${minWithdrawal} ${tokenSymbol}`);
         }
     }
 
@@ -205,7 +206,7 @@ export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, si
         encryptionKey,
         keypair,
         address,
-        token,
+        token: resolvedToken,
         network: net,
     });
     logger.debug(`Unspent UTXOs found: ${unspent.length}`);
@@ -238,14 +239,14 @@ export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, si
         outputs.push(new Utxo({ amount: changeAmount, keypair, mintAddress }));
         const formattedChange = isErc20
             ? `${ethers.utils.formatUnits(changeAmount, tokenDecimals)} ${tokenSymbol}`
-            : `${ethers.utils.formatEther(changeAmount)} ETH`;
+            : `${ethers.utils.formatEther(changeAmount)} ${tokenSymbol}`;
         logger.debug(`Change UTXO: ${formattedChange}`);
     }
 
     const fixedFlatFee = getFlatFeeUnits({
         rentFee,
         feeSnapshot: activeFeeSnapshot,
-        token,
+        token: resolvedToken,
         isErc20,
         tokenDecimals,
     });
@@ -278,9 +279,9 @@ export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, si
         logger.debug(`Fee: ${ethers.utils.formatUnits(fee, tokenDecimals)} ${tokenSymbol} (${ethers.utils.formatUnits(flatFee, tokenDecimals)} ${tokenSymbol} + ${feeRate / 100}%)`);
         logger.debug(`Amount to arrive at recipient: ${ethers.utils.formatUnits(withdrawAmount.sub(fee), tokenDecimals)} ${tokenSymbol}`);
     } else {
-        logger.debug(`Input UTXOs: ${inputs.length} (total: ${ethers.utils.formatEther(inputSum)} ETH)`);
-        logger.debug(`Fee: ${ethers.utils.formatEther(fee)} ETH (${ethers.utils.formatEther(flatFee)} + ${feeRate / 100}%)`);
-        logger.debug(`Amount to arrive at recipient: ${ethers.utils.formatEther(withdrawAmount.sub(fee))} ETH`);
+        logger.debug(`Input UTXOs: ${inputs.length} (total: ${ethers.utils.formatEther(inputSum)} ${tokenSymbol})`);
+        logger.debug(`Fee: ${ethers.utils.formatEther(fee)} ${tokenSymbol} (${ethers.utils.formatEther(flatFee)} + ${feeRate / 100}%)`);
+        logger.debug(`Amount to arrive at recipient: ${ethers.utils.formatEther(withdrawAmount.sub(fee))} ${tokenSymbol}`);
     }
 
     logger.info('generating ZK proof')
@@ -293,7 +294,7 @@ export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, si
         feeRecipient,
         encryptionKey,
         keyBasePath,
-        token,
+        token: resolvedToken,
         network: net,
     });
 
@@ -301,7 +302,7 @@ export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, si
     const response = await fetch(`${net.indexerUrl}/relayer/withdraw`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ args, extData, token, chain: net.chainKey, feeSnapshotId: activeFeeSnapshot?.id }),
+        body: JSON.stringify({ args, extData, token: resolvedToken, chain: net.chainKey, feeSnapshotId: activeFeeSnapshot?.id }),
     });
 
     const result = await response.json();
@@ -316,7 +317,7 @@ export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, si
     if (changeAmount.gt(0)) {
         const formattedChange = isErc20
             ? `${ethers.utils.formatUnits(changeAmount, tokenDecimals)} ${tokenSymbol}`
-            : `${ethers.utils.formatEther(changeAmount)} ETH`;
+            : `${ethers.utils.formatEther(changeAmount)} ${tokenSymbol}`;
         logger.debug(`\nChange UTXO created (${formattedChange})`);
     }
 
@@ -332,7 +333,7 @@ export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, si
         let res = await fetch(net.indexerUrl + '/check_encrypted_output', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ encryptedOutput: extData.encryptedOutput1, token, chain: net.chainKey }),
+            body: JSON.stringify({ encryptedOutput: extData.encryptedOutput1, token: resolvedToken, chain: net.chainKey }),
         });
         let resJson = await res.json()
         if (resJson.exists) {

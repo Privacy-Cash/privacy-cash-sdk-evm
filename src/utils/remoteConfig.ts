@@ -12,7 +12,7 @@ export interface FeeSnapshot {
 }
 
 export interface RemoteConfig {
-    prices: { eth: number };
+    prices: Partial<Record<PrivacyToken, number>>;
     minimum_withdrawal: Record<PrivacyToken, number>;
     minimum_deposit: Record<PrivacyToken, number>;
     rent_fees: Record<PrivacyToken, number>;
