@@ -1,16 +1,18 @@
 export type Erc20Token = 'usdc' | 'usdt';
-export type PrivacyToken = 'eth' | Erc20Token;
+export type NativeToken = 'eth' | 'bnb';
+export type PrivacyToken = NativeToken | Erc20Token;
+export type SupportedChain = 'base' | 'eth' | 'bnb';
 
 const EVM_INDEXER_URL = process.env.NEXT_PUBLIC_EVM_INDEXER_URL || process.env.EVM_INDEXER_URL || 'https://evm.privacycash.org';
 
-function getIndexerRpcUrl(chain: 'base' | 'eth') {
+function getIndexerRpcUrl(chain: SupportedChain) {
     return `${EVM_INDEXER_URL.replace(/\/$/, '')}/rpc/${chain}`;
 }
 
 export interface NetworkConfig {
     chainId: number;
-    /** Short identifier used in API calls and DB table prefixes: 'base' | 'eth' */
-    chainKey: 'base' | 'eth';
+    /** Short identifier used in API calls and DB table prefixes. */
+    chainKey: SupportedChain;
     rpcUrl: string;
     indexerUrl: string;
     etherPoolAddress: string;
@@ -25,6 +27,12 @@ export interface NetworkConfig {
     cachePrefix: string;
     /** Average block time in ms — used to scale confirmation polling timeouts. */
     blockTimeMs: number;
+    /** Native token used by this chain. */
+    nativeToken?: NativeToken;
+    /** Human-readable native token symbol used in logs and errors. */
+    nativeSymbol?: 'ETH' | 'BNB';
+    /** Optional block explorer base URL. */
+    blockExplorerUrl?: string;
 }
 
 export const BASE_NETWORK: NetworkConfig = {
@@ -42,6 +50,8 @@ export const BASE_NETWORK: NetworkConfig = {
     feeRecipientAddress: '0x8D772A68f2327409a7bb3F96f549297AEdf9312B',
     cachePrefix: 'base',
     blockTimeMs: 2000,
+    nativeToken: 'eth',
+    nativeSymbol: 'ETH',
 };
 
 export const ETH_NETWORK: NetworkConfig = {
@@ -59,11 +69,38 @@ export const ETH_NETWORK: NetworkConfig = {
     feeRecipientAddress: process.env.NEXT_PUBLIC_ETH_FEE_RECIPIENT_ADDRESS || '0x8D772A68f2327409a7bb3F96f549297AEdf9312B',
     cachePrefix: 'eth',
     blockTimeMs: 12000,
+    nativeToken: 'eth',
+    nativeSymbol: 'ETH',
+};
+
+const BNB_ALCHEMY_RPC = process.env.ALCHEMY_KEY
+    ? `https://bnb-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_KEY}`
+    : getIndexerRpcUrl('bnb');
+
+export const BNB_NETWORK: NetworkConfig = {
+    chainId: 56,
+    chainKey: 'bnb',
+    rpcUrl: process.env.NEXT_PUBLIC_BNB_RPC || process.env.BNB_RPC || BNB_ALCHEMY_RPC,
+    indexerUrl: EVM_INDEXER_URL,
+    etherPoolAddress: '0x22D8509E7AF58b1EaFB311f8F76E81dC3a391F77',
+    usdcPoolAddress: '',
+    usdcTokenAddress: '',
+    usdcDecimals: 6,
+    usdtPoolAddress: '',
+    usdtTokenAddress: '',
+    usdtDecimals: 18,
+    feeRecipientAddress: '0x8D772A68f2327409a7bb3F96f549297AEdf9312B',
+    cachePrefix: 'bnb',
+    blockTimeMs: 1000,
+    nativeToken: 'bnb',
+    nativeSymbol: 'BNB',
+    blockExplorerUrl: 'https://bscscan.com/',
 };
 
 export const NETWORKS: Record<number, NetworkConfig> = {
     8453: BASE_NETWORK,
     1: ETH_NETWORK,
+    56: BNB_NETWORK,
 };
 
 export function getNetworkConfig(chainId: number): NetworkConfig {
@@ -89,8 +126,26 @@ export function resolveNetwork(network?: NetworkConfig | number): NetworkConfig 
     return network;
 }
 
+/** Resolve an omitted token to the selected chain's native token and reject cross-chain native symbols. */
+export function resolvePrivacyToken(net: NetworkConfig, token?: PrivacyToken): PrivacyToken {
+    const nativeToken: NativeToken = net.nativeToken ?? (net.chainKey === 'bnb' ? 'bnb' : 'eth');
+    const resolved = token ?? nativeToken;
+    if ((resolved === 'eth' || resolved === 'bnb') && resolved !== nativeToken) {
+        throw new Error(`${resolved.toUpperCase()} is not supported on ${net.chainKey}`);
+    }
+    return resolved;
+}
+
+export function isNativeToken(net: NetworkConfig, token: PrivacyToken): boolean {
+    const nativeToken: NativeToken = net.nativeToken ?? (net.chainKey === 'bnb' ? 'bnb' : 'eth');
+    return token === nativeToken;
+}
+
 export function getErc20TokenConfig(net: NetworkConfig, token: PrivacyToken) {
-    if (token === 'eth') return null;
+    if (isNativeToken(net, token)) return null;
+    if (token === 'eth' || token === 'bnb') {
+        throw new Error(`${token.toUpperCase()} is not supported on ${net.chainKey}`);
+    }
     const config = token === 'usdc'
         ? {
             token,

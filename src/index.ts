@@ -10,6 +10,7 @@ export { clearCache } from './utils/utils.js'
 
 export {
     BASE_NETWORK,
+    BNB_NETWORK,
     ETH_NETWORK, getDefaultNetworkConfig, getNetworkConfig, NETWORKS, resolveNetwork
 } from './utils/networkConfig.js'
-export type { Erc20Token, NetworkConfig, PrivacyToken } from './utils/networkConfig.js'
+export type { Erc20Token, NativeToken, NetworkConfig, PrivacyToken, SupportedChain } from './utils/networkConfig.js'

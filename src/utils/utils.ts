@@ -3,7 +3,7 @@ import { BigNumber, ethers } from 'ethers';
 import { poseidon1, poseidon2, poseidon3, poseidon4 } from 'poseidon-lite';
 import { UniversalStorage } from './db.js';
 import { logger } from './logger.js';
-import { NetworkConfig, PrivacyToken, getErc20TokenConfig, resolveNetwork } from './networkConfig.js';
+import { NetworkConfig, PrivacyToken, getErc20TokenConfig, isNativeToken, resolveNetwork, resolvePrivacyToken } from './networkConfig.js';
 import { prove } from './prover.js';
 import { Utxo } from './utxo.js';
 
@@ -16,7 +16,7 @@ const storageCache = new Map<string, UniversalStorage>();
  */
 function getStorage(token: PrivacyToken, net: NetworkConfig): UniversalStorage {
     getErc20TokenConfig(net, token);
-    const baseName = token === 'eth' ? 'evmProd' : token === 'usdc' ? 'evmUsdcProd' : 'evmUsdtProd';
+    const baseName = isNativeToken(net, token) ? 'evmProd' : token === 'usdc' ? 'evmUsdcProd' : 'evmUsdtProd';
     const storeName = net.chainId === 8453 ? baseName : `${net.cachePrefix}_${baseName}`;
     const key = `PrivacyCashDB_${storeName}`;
     if (!storageCache.has(key)) {
@@ -219,7 +219,7 @@ export async function prepareTransaction({
     feeRecipient = '0x44eb9939cfdE7C394f1632C6890191d695f0a3ce',
     encryptionKey,
     keyBasePath,
-    token = 'eth',
+    token,
     network,
 }: {
     inputs?: Utxo[];
@@ -232,6 +232,8 @@ export async function prepareTransaction({
     token?: PrivacyToken;
     network?: NetworkConfig | number;
 }) {
+    const net = resolveNetwork(network);
+    const resolvedToken = resolvePrivacyToken(net, token);
     if (inputs.length > 2 || outputs.length > 2) {
         throw new Error('Only 2 inputs and 2 outputs are supported');
     }
@@ -258,8 +260,8 @@ export async function prepareTransaction({
         feeRecipient,
         encryptionKey,
         keyBasePath,
-        token,
-        network,
+        token: resolvedToken,
+        network: net,
     });
 
     return { extData, args };
@@ -271,7 +273,7 @@ export async function findUnspentUtxos({
     encryptionKey,
     keypair,
     start = 0,
-    token = 'eth',
+    token,
     network,
 }: {
     address: string;
@@ -283,7 +285,8 @@ export async function findUnspentUtxos({
     network?: NetworkConfig | number;
 }) {
     const net = resolveNetwork(network);
-    const storage = getStorage(token, net);
+    const resolvedToken = resolvePrivacyToken(net, token);
+    const storage = getStorage(resolvedToken, net);
     await storage.init();
     const offsetKey = `offset_${address}`;
     const knownKey = `keo_${address}`;
@@ -315,7 +318,7 @@ export async function findUnspentUtxos({
     const limit = 1000;
     let hasMore = true;
     while (hasMore) {
-        let url = `${net.indexerUrl}/get_encrypted?start=${startIndex}&end=${startIndex + limit}&token=${token}&chain=${net.chainKey}`;
+        let url = `${net.indexerUrl}/get_encrypted?start=${startIndex}&end=${startIndex + limit}&token=${resolvedToken}&chain=${net.chainKey}`;
         logger.debug(`Fetching encrypted UTXOs from indexer: ${url}`);
         const res = await fetch(url);
         if (!res.ok) {
@@ -374,9 +377,10 @@ export async function findUnspentUtxos({
     return unspent
 }
 
-export async function clearCache(address: string, token: PrivacyToken = 'eth', network?: NetworkConfig | number): Promise<void> {
+export async function clearCache(address: string, token?: PrivacyToken, network?: NetworkConfig | number): Promise<void> {
     const net = resolveNetwork(network);
-    const storage = getStorage(token, net);
+    const resolvedToken = resolvePrivacyToken(net, token);
+    const storage = getStorage(resolvedToken, net);
     await storage.init();
     await storage.set(`offset_${address}`, 0);
     await storage.set(`keo_${address}`, []);

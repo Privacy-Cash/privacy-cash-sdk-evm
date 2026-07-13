@@ -3,10 +3,10 @@ import ERCPoolAbi from './utils/ERCPool.abi.json' with { type: 'json' };
 import EtherPoolAbi from './utils/EtherPool.abi.json' with { type: 'json' };
 import { deriveKeys } from './utils/encryption.js';
 import { logger } from './utils/logger.js';
-import { NetworkConfig, PrivacyToken, getErc20TokenConfig, resolveNetwork } from './utils/networkConfig.js';
+import { NetworkConfig, PrivacyToken, getErc20TokenConfig, resolveNetwork, resolvePrivacyToken } from './utils/networkConfig.js';
 import { findUnspentUtxos, toFixedHex } from './utils/utils.js';
 
-export async function getBalance({ signature, address, offset, token = 'eth', network }: {
+export async function getBalance({ signature, address, offset, token, network }: {
     signature: string,
     address: string,
     offset?: number,
@@ -14,14 +14,15 @@ export async function getBalance({ signature, address, offset, token = 'eth', ne
     network?: NetworkConfig | number,
 }) {
     const net = resolveNetwork(network);
+    const resolvedToken = resolvePrivacyToken(net, token);
     const readProvider = new ethers.providers.JsonRpcProvider(net.rpcUrl, {
         name: net.chainKey,
         chainId: net.chainId,
     });
 
-    const erc20Token = getErc20TokenConfig(net, token);
+    const erc20Token = getErc20TokenConfig(net, resolvedToken);
     const isErc20 = erc20Token !== null;
-    const tokenSymbol = erc20Token?.symbol ?? 'ETH';
+    const tokenSymbol = erc20Token?.symbol ?? net.nativeSymbol ?? (net.chainKey === 'bnb' ? 'BNB' : 'ETH');
     const tokenDecimals = erc20Token?.decimals ?? 18;
     const contractAddress = ethers.utils.getAddress(erc20Token ? erc20Token.poolAddress : net.etherPoolAddress);
     const abi = isErc20 ? ERCPoolAbi : EtherPoolAbi;
@@ -37,7 +38,7 @@ export async function getBalance({ signature, address, offset, token = 'eth', ne
     if (!isErc20) {
         const poolBalance = await readProvider.getBalance(pool.address);
         logger.debug(`EtherPool: ${pool.address}`);
-        logger.debug(`Pool on-chain balance: ${ethers.utils.formatEther(poolBalance)} ETH`);
+        logger.debug(`Pool on-chain balance: ${ethers.utils.formatEther(poolBalance)} ${tokenSymbol}`);
     }
 
     // Scan on-chain events and decrypt to find our UTXOs
@@ -48,7 +49,7 @@ export async function getBalance({ signature, address, offset, token = 'eth', ne
         keypair,
         address,
         start: offset || 0,
-        token,
+        token: resolvedToken,
         network: net,
     });
 
