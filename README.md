@@ -5,9 +5,9 @@ The SDK also supports BNB mainnet native BNB and USDT through `BNB_NETWORK`
 (chain ID 56). Pass `token: 'bnb'` explicitly (or omit `token`) for native BNB,
 and pass `token: 'usdt'` for BNB USDT.
 
-Run `bun example/bnb-bnb.ts balance` for the BNB SDK example. Deposit and
-withdraw actions require an amount and `BNB_PRIVATE_KEY`. The Base and Ethereum
-examples continue to use `PRIVATE_KEY`.
+Run `bun example/bnb-bnb.ts balance` or `bun example/bnb-usdt.ts balance` for
+the BNB SDK examples. Deposit and withdraw actions require an amount and
+`BNB_PRIVATE_KEY`. The Base and Ethereum examples continue to use `PRIVATE_KEY`.
 
 ### Disclaimer
 This SDK powers Privacy Cash's frontend, assuming the single wallet use case. It is NOT supposed to support hardware wallet.
