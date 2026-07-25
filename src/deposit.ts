@@ -18,6 +18,22 @@ function bumpFee(value: BigNumber, percent = getFeeBumpPercent()): BigNumber {
     return value.mul(percent).div(100);
 }
 
+function getRobinhoodFeeBumpPercent(): number {
+    const value = Number(
+        process.env.NEXT_PUBLIC_ROBINHOOD_FEE_BUMP_PERCENT
+        || process.env.ROBINHOOD_FEE_BUMP_PERCENT,
+    );
+    if (Number.isFinite(value) && value >= 100) return Math.floor(value);
+    return 110;
+}
+
+function getRobinhoodPriorityFee(): BigNumber {
+    const gwei = process.env.NEXT_PUBLIC_ROBINHOOD_PRIORITY_FEE_GWEI
+        || process.env.ROBINHOOD_PRIORITY_FEE_GWEI
+        || '0';
+    return ethers.utils.parseUnits(gwei, 'gwei');
+}
+
 const MAX_PRIORITY_FEE_GWEI = process.env.NEXT_PUBLIC_MAX_PRIORITY_FEE_GWEI || process.env.MAX_PRIORITY_FEE_GWEI || '0.6';
 const MAX_PRIORITY_FEE = ethers.utils.parseUnits(MAX_PRIORITY_FEE_GWEI, 'gwei');
 
@@ -54,6 +70,26 @@ async function getFeeOverrides(
     feeData?: ethers.providers.FeeData,
 ): Promise<ethers.utils.Deferrable<ethers.providers.TransactionRequest>> {
     feeData ??= await provider.getFeeData();
+
+    if (net.chainKey === 'robinhood') {
+        const latestBlock = await provider.getBlock('latest');
+        const baseFee = latestBlock?.baseFeePerGas ?? feeData.lastBaseFeePerGas;
+        if (!baseFee) {
+            throw new Error('Failed to fetch Robinhood base fee data');
+        }
+        const priorityFee = getRobinhoodPriorityFee();
+        const maxFeePerGas = bumpFee(baseFee, getRobinhoodFeeBumpPercent()).add(priorityFee);
+        logger.debug(
+            `Robinhood deposit fee overrides: baseFee=${formatGwei(baseFee)} gwei, ` +
+            `priorityFee=${formatGwei(priorityFee)} gwei, ` +
+            `maxFeePerGas=${formatGwei(maxFeePerGas)} gwei`,
+        );
+        return {
+            type: 2,
+            maxPriorityFeePerGas: priorityFee,
+            maxFeePerGas,
+        };
+    }
 
     // BNB Smart Chain's legacy gasPrice is the most widely supported path.
     if (net.chainKey === 'bnb' && feeData.gasPrice) {
@@ -159,28 +195,42 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
     const tokenSymbol = erc20Token?.symbol ?? net.nativeSymbol ?? (net.chainKey === 'bnb' ? 'BNB' : 'ETH');
     const tokenDecimals = erc20Token?.decimals ?? 18;
 
-    const remoteConfig = await getRemoteConfig(net);
-    const minDeposit = remoteConfig.minimum_deposit[resolvedToken];
+    const poolAddress = ethers.utils.getAddress(erc20Token ? erc20Token.poolAddress : net.etherPoolAddress);
+    const abi = isErc20 ? ERCPoolAbi : EtherPoolAbi;
+    const pool = new ethers.Contract(poolAddress, abi, readProvider);
 
-    if (isErc20) {
-        if (depositAmountInput < minDeposit) {
-            throw new Error(`Deposit amount must be at least ${minDeposit} ${tokenSymbol}`);
+    const depositAmount = isErc20
+        ? ethers.utils.parseUnits(depositAmountInput.toString(), tokenDecimals)
+        : ethers.utils.parseEther(depositAmountInput.toString());
+
+    let maxDeposit: BigNumber;
+    if (net.chainKey === 'robinhood') {
+        const [minDepositUnits, chainMaxDeposit]: [BigNumber, BigNumber] = await Promise.all([
+            pool.minimumAmount(),
+            pool.maximumDepositAmount(),
+        ]);
+        maxDeposit = chainMaxDeposit;
+        if (depositAmount.lt(minDepositUnits)) {
+            throw new Error(
+                `Deposit amount must be at least ${ethers.utils.formatEther(minDepositUnits)} ${tokenSymbol}`,
+            );
         }
     } else {
+        const [remoteConfig, chainMaxDeposit] = await Promise.all([
+            getRemoteConfig(net),
+            pool.maximumDepositAmount() as Promise<BigNumber>,
+        ]);
+        maxDeposit = chainMaxDeposit;
+        const minDeposit = remoteConfig.minimum_deposit[resolvedToken];
         if (depositAmountInput < minDeposit) {
             throw new Error(`Deposit amount must be at least ${minDeposit} ${tokenSymbol}`);
         }
     }
 
-    const poolAddress = ethers.utils.getAddress(erc20Token ? erc20Token.poolAddress : net.etherPoolAddress);
-    const abi = isErc20 ? ERCPoolAbi : EtherPoolAbi;
-
     logger.debug(`Depositor: ${address}`);
 
     const { encryptionKey, keypair } = deriveKeys(signature);
     logger.debug(`UTXO pubkey: ${toFixedHex(keypair.pubkey)}`);
-
-    const pool = new ethers.Contract(poolAddress, abi, readProvider);
 
     if (!isErc20) {
         const poolBalance = await readProvider.getBalance(pool.address);
@@ -188,11 +238,6 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
         logger.debug(`Pool balance: ${ethers.utils.formatEther(poolBalance)} ${tokenSymbol}`);
     }
 
-    const depositAmount = isErc20
-        ? ethers.utils.parseUnits(depositAmountInput.toString(), tokenDecimals)
-        : ethers.utils.parseEther(depositAmountInput.toString());
-
-    const maxDeposit = await pool.maximumDepositAmount();
     if (depositAmount.gt(maxDeposit)) {
         const formatted = isErc20
             ? `${ethers.utils.formatUnits(maxDeposit, tokenDecimals)} ${tokenSymbol}`
