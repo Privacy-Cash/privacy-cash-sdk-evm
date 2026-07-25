@@ -1,7 +1,7 @@
 export type Erc20Token = 'usdc' | 'usdt';
 export type NativeToken = 'eth' | 'bnb';
 export type PrivacyToken = NativeToken | Erc20Token;
-export type SupportedChain = 'base' | 'eth' | 'bnb';
+export type SupportedChain = 'base' | 'eth' | 'bnb' | 'robinhood';
 
 const EVM_INDEXER_URL = process.env.NEXT_PUBLIC_EVM_INDEXER_URL || process.env.EVM_INDEXER_URL || 'https://evm.privacycash.org';
 
@@ -97,10 +97,31 @@ export const BNB_NETWORK: NetworkConfig = {
     blockExplorerUrl: 'https://bscscan.com/',
 };
 
+export const ROBINHOOD_NETWORK: NetworkConfig = {
+    chainId: 4663,
+    chainKey: 'robinhood',
+    rpcUrl: getIndexerRpcUrl('robinhood'),
+    indexerUrl: EVM_INDEXER_URL,
+    etherPoolAddress: '0xEC5266c9e44631e1ba22FD6377C38130c1F3B738',
+    usdcPoolAddress: '',
+    usdcTokenAddress: '',
+    usdcDecimals: 6,
+    usdtPoolAddress: '',
+    usdtTokenAddress: '',
+    usdtDecimals: 6,
+    feeRecipientAddress: BASE_NETWORK.feeRecipientAddress,
+    cachePrefix: 'robinhood',
+    blockTimeMs: 100,
+    nativeToken: 'eth',
+    nativeSymbol: 'ETH',
+    blockExplorerUrl: 'https://robinhoodchain.blockscout.com/',
+};
+
 export const NETWORKS: Record<number, NetworkConfig> = {
     8453: BASE_NETWORK,
     1: ETH_NETWORK,
     56: BNB_NETWORK,
+    4663: ROBINHOOD_NETWORK,
 };
 
 export function getNetworkConfig(chainId: number): NetworkConfig {
