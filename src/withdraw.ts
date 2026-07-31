@@ -13,6 +13,24 @@ function formatTokenAmount(value: BigNumber, isErc20: boolean, tokenDecimals: nu
     return isErc20 ? ethers.utils.formatUnits(value, tokenDecimals) : ethers.utils.formatEther(value);
 }
 
+const ROBINHOOD_REFERRAL_PROTOCOL_FEE_PERCENT = 90;
+
+function hasReferralWithdrawDiscount(net: NetworkConfig, referId?: string): boolean {
+    return net.chainKey === 'robinhood' && typeof referId === 'string' && referId.trim().length > 0;
+}
+
+function getProtocolFeeRatePercent(feeRateBps: number, isReferralDiscountActive: boolean): number {
+    const multiplierPercent = isReferralDiscountActive ? ROBINHOOD_REFERRAL_PROTOCOL_FEE_PERCENT : 100;
+    return feeRateBps * multiplierPercent / 10000;
+}
+
+function getRateFeeUnits(withdrawAmount: BigNumber, feeRateBps: number, isReferralDiscountActive: boolean): BigNumber {
+    if (!isReferralDiscountActive) {
+        return withdrawAmount.mul(feeRateBps).div(10000);
+    }
+    return withdrawAmount.mul(feeRateBps).mul(ROBINHOOD_REFERRAL_PROTOCOL_FEE_PERCENT).div(10000).div(100);
+}
+
 function assertFeeFitsWithdrawal(fee: BigNumber, withdrawAmount: BigNumber, isErc20: boolean, tokenDecimals: number, tokenSymbol: string) {
     if (fee.mul(2).gte(withdrawAmount)) {
         throw new Error(
@@ -115,7 +133,7 @@ function logWithdrawFeeBreakdown({
     rateFee,
     totalFee,
     withdrawAmount,
-    feeRate,
+    protocolFeeRatePercent,
     isErc20,
     tokenDecimals,
     tokenSymbol,
@@ -124,19 +142,19 @@ function logWithdrawFeeBreakdown({
     rateFee: BigNumber;
     totalFee: BigNumber;
     withdrawAmount: BigNumber;
-    feeRate: number;
+    protocolFeeRatePercent: number;
     isErc20: boolean;
     tokenDecimals: number;
     tokenSymbol: string;
 }) {
     logger.info(
         `Withdraw fee breakdown: rent/network fee=${formatTokenAmount(flatFee, isErc20, tokenDecimals)} ${tokenSymbol}, ` +
-        `protocol fee=${formatTokenAmount(rateFee, isErc20, tokenDecimals)} ${tokenSymbol} (${feeRate / 100}% of ${formatTokenAmount(withdrawAmount, isErc20, tokenDecimals)} ${tokenSymbol}), ` +
+        `protocol fee=${formatTokenAmount(rateFee, isErc20, tokenDecimals)} ${tokenSymbol} (${protocolFeeRatePercent}% of ${formatTokenAmount(withdrawAmount, isErc20, tokenDecimals)} ${tokenSymbol}), ` +
         `total fee=${formatTokenAmount(totalFee, isErc20, tokenDecimals)} ${tokenSymbol}`,
     );
 }
 
-export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, signature, address, token, network, feeSnapshot }: {
+export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, signature, address, token, network, feeSnapshot, referId }: {
     withdrawAmountInput: number,
     recipient: string,
     keyBasePath: string,
@@ -145,6 +163,7 @@ export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, si
     token?: PrivacyToken,
     network?: NetworkConfig | number,
     feeSnapshot?: FeeSnapshot | null,
+    referId?: string,
 }) {
     if (!ethers.utils.isAddress(recipient)) {
         throw new Error(`Invalid recipient address: ${recipient}`);
@@ -169,6 +188,9 @@ export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, si
     const minWithdrawal = remoteConfig.minimum_withdrawal[resolvedToken];
     const rentFee = remoteConfig.rent_fees[resolvedToken];
     const feeRate = activeFeeSnapshot?.feeRateBps ?? remoteConfig.fee_rate;
+    const isReferralDiscountActive = hasReferralWithdrawDiscount(net, referId);
+    const activeReferId = isReferralDiscountActive ? referId?.trim() : undefined;
+    const protocolFeeRatePercent = getProtocolFeeRatePercent(feeRate, isReferralDiscountActive);
 
     if (isErc20) {
         if (withdrawAmountInput < minWithdrawal) {
@@ -251,7 +273,7 @@ export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, si
         tokenDecimals,
     });
     let flatFee = fixedFlatFee;
-    const rateFee = withdrawAmount.mul(feeRate).div(10000);
+    const rateFee = getRateFeeUnits(withdrawAmount, feeRate, isReferralDiscountActive);
     let fee = flatFee.add(rateFee);
 
     logWithdrawFeeBreakdown({
@@ -259,7 +281,7 @@ export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, si
         rateFee,
         totalFee: fee,
         withdrawAmount,
-        feeRate,
+        protocolFeeRatePercent,
         isErc20,
         tokenDecimals,
         tokenSymbol,
@@ -276,11 +298,11 @@ export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, si
 
     if (isErc20) {
         logger.debug(`Input UTXOs: ${inputs.length} (total: ${ethers.utils.formatUnits(inputSum, tokenDecimals)} ${tokenSymbol})`);
-        logger.debug(`Fee: ${ethers.utils.formatUnits(fee, tokenDecimals)} ${tokenSymbol} (${ethers.utils.formatUnits(flatFee, tokenDecimals)} ${tokenSymbol} + ${feeRate / 100}%)`);
+        logger.debug(`Fee: ${ethers.utils.formatUnits(fee, tokenDecimals)} ${tokenSymbol} (${ethers.utils.formatUnits(flatFee, tokenDecimals)} ${tokenSymbol} + ${protocolFeeRatePercent}%)`);
         logger.debug(`Amount to arrive at recipient: ${ethers.utils.formatUnits(withdrawAmount.sub(fee), tokenDecimals)} ${tokenSymbol}`);
     } else {
         logger.debug(`Input UTXOs: ${inputs.length} (total: ${ethers.utils.formatEther(inputSum)} ${tokenSymbol})`);
-        logger.debug(`Fee: ${ethers.utils.formatEther(fee)} ${tokenSymbol} (${ethers.utils.formatEther(flatFee)} + ${feeRate / 100}%)`);
+        logger.debug(`Fee: ${ethers.utils.formatEther(fee)} ${tokenSymbol} (${ethers.utils.formatEther(flatFee)} + ${protocolFeeRatePercent}%)`);
         logger.debug(`Amount to arrive at recipient: ${ethers.utils.formatEther(withdrawAmount.sub(fee))} ${tokenSymbol}`);
     }
 
@@ -302,7 +324,7 @@ export async function withdraw({ withdrawAmountInput, recipient, keyBasePath, si
     const response = await fetch(`${net.indexerUrl}/relayer/withdraw`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ args, extData, token: resolvedToken, chain: net.chainKey, feeSnapshotId: activeFeeSnapshot?.id }),
+        body: JSON.stringify({ args, extData, token: resolvedToken, chain: net.chainKey, feeSnapshotId: activeFeeSnapshot?.id, referId: activeReferId }),
     });
 
     const result = await response.json();
