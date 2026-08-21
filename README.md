@@ -9,10 +9,12 @@ Run `bun example/bnb-bnb.ts balance` or `bun example/bnb-usdt.ts balance` for
 the BNB SDK examples. Deposit and withdraw actions require an amount and
 `BNB_PRIVATE_KEY`. The Base and Ethereum examples continue to use `PRIVATE_KEY`.
 
-Robinhood Chain mainnet is supported for native ETH through
-`ROBINHOOD_NETWORK` (chain ID 4663). SDK reads use the EVM indexer's
+Robinhood Chain mainnet supports native ETH and USDG through
+`ROBINHOOD_NETWORK` (chain ID 4663). Native ETH is the default; pass
+`token: 'usdg'` for USDG. SDK reads use the EVM indexer's
 `/rpc/robinhood` proxy, and deposit limits are read directly from the
-Robinhood EtherPool contract.
+selected Robinhood pool contract. Run `bun example/robin-eth.ts balance` or
+`bun example/robin-usdg.ts balance` for the corresponding example.
 
 Robinhood deposits default to a 110% base-fee multiplier and zero priority
 fee. Override them with `ROBINHOOD_FEE_BUMP_PERCENT` and
