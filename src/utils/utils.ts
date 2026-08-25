@@ -16,7 +16,13 @@ const storageCache = new Map<string, UniversalStorage>();
  */
 function getStorage(token: PrivacyToken, net: NetworkConfig): UniversalStorage {
     getErc20TokenConfig(net, token);
-    const baseName = isNativeToken(net, token) ? 'evmProd' : token === 'usdc' ? 'evmUsdcProd' : 'evmUsdtProd';
+    const baseName = isNativeToken(net, token)
+        ? 'evmProd'
+        : token === 'usdc'
+            ? 'evmUsdcProd'
+            : token === 'usdt'
+                ? 'evmUsdtProd'
+                : 'evmUsdgProd';
     const storeName = net.chainId === 8453 ? baseName : `${net.cachePrefix}_${baseName}`;
     const key = `PrivacyCashDB_${storeName}`;
     if (!storageCache.has(key)) {

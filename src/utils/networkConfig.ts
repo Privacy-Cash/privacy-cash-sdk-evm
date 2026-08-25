@@ -1,4 +1,4 @@
-export type Erc20Token = 'usdc' | 'usdt';
+export type Erc20Token = 'usdc' | 'usdt' | 'usdg';
 export type NativeToken = 'eth' | 'bnb';
 export type PrivacyToken = NativeToken | Erc20Token;
 export type SupportedChain = 'base' | 'eth' | 'bnb' | 'robinhood';
@@ -22,6 +22,9 @@ export interface NetworkConfig {
     usdtPoolAddress: string;
     usdtTokenAddress: string;
     usdtDecimals: number;
+    usdgPoolAddress: string;
+    usdgTokenAddress: string;
+    usdgDecimals: number;
     feeRecipientAddress: string;
     /** Namespace prefix for local UTXO cache files. Base keeps legacy names. */
     cachePrefix: string;
@@ -47,6 +50,9 @@ export const BASE_NETWORK: NetworkConfig = {
     usdtPoolAddress: '',
     usdtTokenAddress: '',
     usdtDecimals: 6,
+    usdgPoolAddress: '',
+    usdgTokenAddress: '',
+    usdgDecimals: 6,
     feeRecipientAddress: '0x8D772A68f2327409a7bb3F96f549297AEdf9312B',
     cachePrefix: 'base',
     blockTimeMs: 2000,
@@ -66,6 +72,9 @@ export const ETH_NETWORK: NetworkConfig = {
     usdtPoolAddress: process.env.NEXT_PUBLIC_ETH_USDT_POOL_ADDRESS || '0xC88F4dF2B6EdDd6B6Bdf95A0177f50C90Fa7527f',
     usdtTokenAddress: process.env.NEXT_PUBLIC_ETH_USDT_TOKEN_ADDRESS || '0xdAC17F958D2ee523a2206206994597C13D831ec7',
     usdtDecimals: 6,
+    usdgPoolAddress: '',
+    usdgTokenAddress: '',
+    usdgDecimals: 6,
     feeRecipientAddress: process.env.NEXT_PUBLIC_ETH_FEE_RECIPIENT_ADDRESS || '0x8D772A68f2327409a7bb3F96f549297AEdf9312B',
     cachePrefix: 'eth',
     blockTimeMs: 12000,
@@ -89,6 +98,9 @@ export const BNB_NETWORK: NetworkConfig = {
     usdtPoolAddress: '0x9926A40B0879b36F9586c4285f0fae597bd56313',
     usdtTokenAddress: '0x55d398326f99059fF775485246999027B3197955',
     usdtDecimals: 18,
+    usdgPoolAddress: '',
+    usdgTokenAddress: '',
+    usdgDecimals: 6,
     feeRecipientAddress: '0x8D772A68f2327409a7bb3F96f549297AEdf9312B',
     cachePrefix: 'bnb',
     blockTimeMs: 1000,
@@ -109,6 +121,9 @@ export const ROBINHOOD_NETWORK: NetworkConfig = {
     usdtPoolAddress: '',
     usdtTokenAddress: '',
     usdtDecimals: 6,
+    usdgPoolAddress: '0xBB0C7F576B7bdAa8f2a119cb295076aCD0C9013f',
+    usdgTokenAddress: '0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168',
+    usdgDecimals: 6,
     feeRecipientAddress: BASE_NETWORK.feeRecipientAddress,
     cachePrefix: 'robinhood',
     blockTimeMs: 100,
@@ -175,13 +190,21 @@ export function getErc20TokenConfig(net: NetworkConfig, token: PrivacyToken) {
             tokenAddress: net.usdcTokenAddress,
             decimals: net.usdcDecimals,
         }
-        : {
+        : token === 'usdt'
+            ? {
             token,
             symbol: 'USDT' as const,
             poolAddress: net.usdtPoolAddress,
             tokenAddress: net.usdtTokenAddress,
             decimals: net.usdtDecimals,
-        };
+            }
+            : {
+                token,
+                symbol: 'USDG' as const,
+                poolAddress: net.usdgPoolAddress,
+                tokenAddress: net.usdgTokenAddress,
+                decimals: net.usdgDecimals,
+            };
 
     if (!config.poolAddress || !config.tokenAddress) {
         throw new Error(`${token.toUpperCase()} is not supported on ${net.chainKey}`);

@@ -211,8 +211,11 @@ export async function deposit({ depositAmountInput, keyBasePath, signature, addr
         ]);
         maxDeposit = chainMaxDeposit;
         if (depositAmount.lt(minDepositUnits)) {
+            const formattedMinimum = isErc20
+                ? ethers.utils.formatUnits(minDepositUnits, tokenDecimals)
+                : ethers.utils.formatEther(minDepositUnits);
             throw new Error(
-                `Deposit amount must be at least ${ethers.utils.formatEther(minDepositUnits)} ${tokenSymbol}`,
+                `Deposit amount must be at least ${formattedMinimum} ${tokenSymbol}`,
             );
         }
     } else {
