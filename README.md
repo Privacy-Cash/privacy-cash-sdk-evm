@@ -21,6 +21,10 @@ fee. Override them with `ROBINHOOD_FEE_BUMP_PERCENT` and
 `ROBINHOOD_PRIORITY_FEE_GWEI`; browser builds may use the corresponding
 `NEXT_PUBLIC_` variables.
 
+# Warnings
+Privacy Cash SDK requires consistent signature generation, otherwise the deposited tokens might be lost forever since the encrypted UTXO can't be decrypted. Please make sure 
+deriveKeys() generates the same result for the same params passed in. Most wallets returns the same result, but some non major wallets might generate different result.
+
 ### Disclaimer
 This SDK powers Privacy Cash's frontend, assuming the single wallet use case. It is NOT supposed to support hardware wallet.
 
