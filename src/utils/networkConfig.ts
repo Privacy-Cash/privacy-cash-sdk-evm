@@ -53,7 +53,7 @@ export const BASE_NETWORK: NetworkConfig = {
     usdgPoolAddress: '',
     usdgTokenAddress: '',
     usdgDecimals: 6,
-    feeRecipientAddress: '0x8D772A68f2327409a7bb3F96f549297AEdf9312B',
+    feeRecipientAddress: '0xe7E15cbF5FC58c37948D23788eACAef11Bf29e37',
     cachePrefix: 'base',
     blockTimeMs: 2000,
     nativeToken: 'eth',
@@ -75,7 +75,7 @@ export const ETH_NETWORK: NetworkConfig = {
     usdgPoolAddress: '',
     usdgTokenAddress: '',
     usdgDecimals: 6,
-    feeRecipientAddress: process.env.NEXT_PUBLIC_ETH_FEE_RECIPIENT_ADDRESS || '0x8D772A68f2327409a7bb3F96f549297AEdf9312B',
+    feeRecipientAddress: process.env.NEXT_PUBLIC_ETH_FEE_RECIPIENT_ADDRESS || '0xe7E15cbF5FC58c37948D23788eACAef11Bf29e37',
     cachePrefix: 'eth',
     blockTimeMs: 12000,
     nativeToken: 'eth',
@@ -101,7 +101,7 @@ export const BNB_NETWORK: NetworkConfig = {
     usdgPoolAddress: '',
     usdgTokenAddress: '',
     usdgDecimals: 6,
-    feeRecipientAddress: '0x8D772A68f2327409a7bb3F96f549297AEdf9312B',
+    feeRecipientAddress: '0xe7E15cbF5FC58c37948D23788eACAef11Bf29e37',
     cachePrefix: 'bnb',
     blockTimeMs: 1000,
     nativeToken: 'bnb',
@@ -192,11 +192,11 @@ export function getErc20TokenConfig(net: NetworkConfig, token: PrivacyToken) {
         }
         : token === 'usdt'
             ? {
-            token,
-            symbol: 'USDT' as const,
-            poolAddress: net.usdtPoolAddress,
-            tokenAddress: net.usdtTokenAddress,
-            decimals: net.usdtDecimals,
+                token,
+                symbol: 'USDT' as const,
+                poolAddress: net.usdtPoolAddress,
+                tokenAddress: net.usdtTokenAddress,
+                decimals: net.usdtDecimals,
             }
             : {
                 token,
